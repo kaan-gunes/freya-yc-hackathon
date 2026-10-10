@@ -9,3 +9,6 @@ __pycache__/
 build-the-builder/.freya-agents.json
 build-the-builder/.personas.json
 build-the-builder/results/
+build-the-builder/out/
+build-the-builder/traces/
+build-the-builder/.builder.lock

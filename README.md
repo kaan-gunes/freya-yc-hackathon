@@ -1,6 +1,6 @@
 # Freya YC Hackathon
 
-Freya “Build the Builder” hackathonu için ortak çalışma klasörü. Starter kit v3, araştırma notları ve test araçları bulunur. Kendi builder'ımız henüz geliştirilmedi.
+Freya “Build the Builder” hackathonu için ortak çalışma klasörü. Starter kit v3, araştırma notları, test araçları ve [ilk builder](builder/README.md) bulunur.
 
 **Amaç:** Banka talimatlarını ve araç API dosyasını okuyup, Freya üzerinde kurallara uygun bir telefon agentı oluşturan builder geliştirmek.
 
@@ -23,6 +23,7 @@ Banka talimatları + OpenAPI → Builder → Freya'da telefon agentı → Test �
 |---|---|
 | `build-the-builder/` | Resmî starter kit v3; briefler, örnek agent/builder, API istemcisi ve test koşucusu |
 | `scripts/` | Resmî testleri çalıştırıp hata, skor ve konuşma kayıtlarını saklayan yardımcı komutlar |
+| `builder/` | Girdi dosyalarından politika ve workflow üreten ilk builder; yerel kontroller ve çalıştırma rehberi |
 | `research/` | Teknik incelemeler, sentetik test fikirleri ve hata raporları |
 
 ## Kurulum
