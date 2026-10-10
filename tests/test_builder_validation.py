@@ -3,7 +3,7 @@ import json
 import pathlib
 import unittest
 
-from builder.validation import validate
+from builder.validation import _json_equal, _parse, _run_check, validate
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -163,7 +163,7 @@ class ValidationTests(unittest.TestCase):
         self.assert_rejected(arguments, "final always")
 
     def test_invalid_snippet_and_forbidden_bank_writer(self):
-        for code, reason in (("if !!!", "invalid Python"), ("import os", "allowlist"), ("vars['record_authorization'] = '{{bad}}'", "template braces"), ("vars['bank_status'] = 'verified'", "verification can only"), ("state = vars\nstate['bank_status'] = 'verified'", "alias")):
+        for code, reason in (("if !!!", "invalid Python"), ("import os", "allowlist"), ("vars['record_authorization'] = '{{bad}}'", "template braces"), ("vars['bank_status'] = 'verified'", "verification can only"), ("vars['bank_status'] = vars.get('speech')", "verification can only"), ("state = vars\nstate['bank_status'] = 'verified'", "alias")):
             arguments = candidate()
             arguments[0]["nodes"]["offer"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]["default"] = code
             self.assert_rejected(arguments, reason)
@@ -223,6 +223,29 @@ class ValidationTests(unittest.TestCase):
         arguments = candidate()
         arguments[0]["nodes"]["identity"]["tools"] = [None]
         self.assert_rejected(arguments, "malformed generated data")
+
+    def test_json_number_equality_keeps_booleans_distinct(self):
+        self.assertTrue(_json_equal(100.0, 100))
+        self.assertTrue(_json_equal({"amounts": [100.0]}, {"amounts": [100]}))
+        self.assertFalse(_json_equal(False, 0))
+        self.assertFalse(_json_equal({"flag": [False]}, {"flag": [0]}))
+        _run_check("vars['amount'] = 100.0", {"vars": {}, "expected": {"amount": 100}})
+        with self.assertRaisesRegex(ValueError, "expected 0"):
+            _run_check("vars['flag'] = False", {"vars": {}, "expected": {"flag": 0}})
+
+    def test_datetime_internal_imports_do_not_grant_direct_time_import(self):
+        code = "import datetime\nvars['time'] = datetime.time(19, 0).strftime('%H:%M')\nvars['date'] = datetime.datetime.strptime('14/10/2026', '%d/%m/%Y').date().isoformat()"
+        _parse(code)
+        _run_check(code, {"vars": {}, "expected": {"time": "19:00", "date": "2026-10-14"}})
+        with self.assertRaisesRegex(ValueError, "allowlist"):
+            _parse("import time")
+
+    def test_identity_pre_hook_can_clear_but_cannot_verify(self):
+        arguments = candidate()
+        arguments[0]["nodes"]["identity"]["tools"][0]["pre_process_code"] = "vars['bank_status'] = 'unverified'"
+        self.assertTrue(validate(*arguments)["ok"])
+        arguments[0]["nodes"]["identity"]["tools"][0]["pre_process_code"] = "vars['bank_status'] = 'verified'"
+        self.assert_rejected(arguments, "verification can only be activated")
 
 
 if __name__ == "__main__":

@@ -120,7 +120,7 @@ def _writes(tree):
 
 
 def _safe_import(name, globals=None, locals=None, fromlist=(), level=0):
-    if name == "_strptime" and not level:
+    if name in ("_strptime", "time") and not level:
         return importlib.import_module(name)
     if level or name not in SAFE_MODULES:
         raise ImportError("module unavailable")
@@ -162,6 +162,18 @@ def _execute(code, check, connection):
         connection.close()
 
 
+def _json_equal(actual, expected):
+    if isinstance(actual, bool) or isinstance(expected, bool):
+        return type(actual) is type(expected) and actual == expected
+    if isinstance(actual, (int, float)) and isinstance(expected, (int, float)):
+        return actual == expected
+    if isinstance(actual, dict) and isinstance(expected, dict):
+        return actual.keys() == expected.keys() and all(_json_equal(value, expected[key]) for key, value in actual.items())
+    if isinstance(actual, list) and isinstance(expected, list):
+        return len(actual) == len(expected) and all(_json_equal(left, right) for left, right in zip(actual, expected))
+    return type(actual) is type(expected) and actual == expected
+
+
 def _run_check(code, check):
     # shortcut: subprocess isolation is for generated checks, use an OS sandbox for hostile code.
     context = multiprocessing.get_context("fork")
@@ -187,7 +199,7 @@ def _run_check(code, check):
                 if key not in output["vars"]:
                     raise ValueError(f"expected variable {key} was not produced")
                 actual = output["vars"][key]
-            if type(actual) is not type(expected) or actual != expected:
+            if not _json_equal(actual, expected):
                 raise ValueError(f"{key}: expected {expected!r}, got {actual!r}")
         if check.get("forbid_api") and output["config"] != check.get("config", {}):
             raise ValueError("forbid_api check changed the HTTP request")
@@ -422,9 +434,10 @@ def _validate(workflow, policy, openapi, checks):
                     if not isinstance(value, ast.Constant) or value.value == authorized:
                         fail(f"{identifier}: only the approval guard may activate record authorization")
             if bank_var in writes:
-                bank_writers.append(identifier)
-                if operation not in verification_tools or hook != "post":
-                    fail(f"{identifier}: bank verification can only be written in a verification post-hook")
+                if operation in verification_tools and hook == "post":
+                    bank_writers.append(identifier)
+                elif any(not isinstance(value, ast.Constant) or value.value == "verified" for value in _authorization_values(tree, bank_var)):
+                    fail(f"{identifier}: bank verification can only be activated in a verification post-hook")
         except (ValueError, SyntaxError, TypeError) as exc:
             fail(f"{identifier}: invalid Python: {exc}")
     if not bank_writers:

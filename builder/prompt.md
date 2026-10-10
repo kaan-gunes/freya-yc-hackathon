@@ -144,6 +144,8 @@ global interrupt, or default passthrough target can bypass either gate.
 Set maxRetries=0 and connect_retries=0 for writes. Do not rely on hook exceptions
 to cancel a request. Re-check current immutable authorization in approval code,
 then enter a fresh record node so baked fields are current.
+Reset write flags in the approval guard. Record pre_actions have no pre-hook;
+their fully bound request must already be valid when the node is entered.
 
 Only the CURRENT bank body business result determines recorded status.
 HTTP 200, outer status:success, and prior success counters do not prove success.
@@ -212,6 +214,8 @@ Use POST URL as OpenAPI server + path, Content-Type application/json.
 Code nodes contain code_exec in pre_actions, with code as baked default, read/write
 through vars, try/except fallbacks and no raise. Imports only the documented
 json, re and datetime. No I/O, subprocess, network, eval or exec. No
+dynamic writes such as vars[key], vars.update, or aliases of vars: write each
+state field with a literal key so ownership can be checked before publishing. No
 dunder attributes. Do not put `{{` or `}}` ANYWHERE inside code, even nested dict
 closing braces. Separate closing braces with whitespace or use temporary objects.
 All output variables read in later prompts must have defaults. Every passthrough
