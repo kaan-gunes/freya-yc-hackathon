@@ -46,11 +46,13 @@ def candidate():
 import re
 event = vars.get('speech_event', '')
 current_date = vars.get('speech_date', '')
-answer = vars.get('speech_answer', '') or current_date
+speech_text = vars.get('speech_text', '')
+answer = vars.get('speech_answer', '') or current_date or speech_text
 party = vars.get('party_confirmation', '')
 vars['speech_event'] = ''
 vars['speech_answer'] = ''
 vars['speech_date'] = ''
+vars['speech_text'] = ''
 vars['record_authorization'] = ''
 vars['persuasion_attempts'] = int(vars.get('persuasion_attempts', 0))
 vars['route'] = 'listen'
@@ -64,19 +66,29 @@ elif vars.get('bank_status') == 'verified' and event == 'no':
     vars['route'] = 'offer'
 elif event == 'yes' and party != 'confirmed':
     vars['party_confirmation'] = 'confirmed'
-elif party == 'confirmed' and answer:
+elif party == 'confirmed' and answer and event == 'yes':
     try:
-        try:
-            day = datetime.date.fromisoformat(answer)
-        except ValueError:
-            words = re.sub(r'(\d)(st|nd|rd|th)\b', r'\1', answer.lower()).replace(',', '').split()
-            months = 'january february march april may june july august september october november december'.split()
-            if words[0].isdigit():
-                day = datetime.date(int(words[2]), months.index(words[1]) + 1, int(words[0]))
-            else:
-                day = datetime.date(int(words[2]), months.index(words[0]) + 1, int(words[1]))
-        vars['verification_answer'] = day.isoformat()
-        vars['route'] = 'verify'
+        clean = re.sub(r'[._]+$', '', answer.strip().lower()).strip()
+        if vars.get('stage') == 'identity_phone':
+            clean = re.sub(r'^(my last four digits are|my verification code is)\s+', '', clean)
+            if re.fullmatch(r'[0-9]{' + str(int(vars.get('code_length', 4))) + '}', clean):
+                vars['verification_answer'] = clean
+                vars['verification_question'] = 'phone_last4'
+                vars['route'] = 'verify'
+        else:
+            clean = re.sub(r'^my date of birth is\s+', '', clean)
+            try:
+                day = datetime.date.fromisoformat(clean)
+            except ValueError:
+                words = re.sub(r'(\d)(st|nd|rd|th)\b', r'\1', clean).replace(',', '').split()
+                months = 'january february march april may june july august september october november december'.split()
+                if words[0].isdigit():
+                    day = datetime.date(int(words[2]), months.index(words[1]) + 1, int(words[0]))
+                else:
+                    day = datetime.date(int(words[2]), months.index(words[0]) + 1, int(words[1]))
+            vars['verification_answer'] = day.isoformat()
+            vars['verification_question'] = 'date_of_birth'
+            vars['route'] = 'verify'
     except (ValueError, IndexError):
         pass
 """
@@ -120,9 +132,9 @@ elif not vars.get('recorded') and vars.get('offer_fingerprint') and vars.get('of
     transfer_guard = "vars['transfer_authorization'] = ''\nif vars.get('exception') in ('human', 'plan', 'dispute'):\n    vars['transfer_queue'] = 'restructuring' if vars['exception'] == 'plan' else 'support'\n    vars['transfer_authorization'] = 'authorized'\n"
     closing = "body = config.get('body', {})\nbody['outcome'] = vars.get('outcome', 'not_verified')\nif body['outcome'] in ('promise', 'paid'):\n    body.pop('reason', None)\nelse:\n    body['reason'] = vars.get('reason', 'declined')\nconfig['body'] = body\n"
     workflow = {"initial_node": "identity", "nodes": {
-        "identity": {"name": "identity", "node_type": "conversation", "on_enter": {"type": "tts", "text": "Am I speaking with the customer?"}, "extraction_schema": [{"name": "speech_event", "type": "string", "enum": ["", "yes", "no", "question", "third_party"], "min_confidence": 0, "max_retries": 1}, {"name": "speech_answer", "type": "string", "min_confidence": 0, "max_retries": 1}, {"name": "speech_date", "type": "string", "min_confidence": 0, "max_retries": 1}], "transitions": [route("decision")]},
+        "identity": {"name": "identity", "node_type": "conversation", "on_enter": {"type": "tts", "text": "Am I speaking with the customer?"}, "extraction_schema": [{"name": "speech_event", "type": "string", "enum": ["", "yes", "no", "question", "third_party"], "min_confidence": 0, "max_retries": 1}, {"name": "speech_answer", "type": "string", "min_confidence": 0, "max_retries": 1}, {"name": "speech_date", "type": "string", "min_confidence": 0, "max_retries": 1}, {"name": "speech_text", "type": "string", "min_confidence": 0, "max_retries": 1}], "transitions": [route("decision")]},
         "decision": code_node("decision", decision, [route("account", {"logic": "or", "conditions": [{"logic": "and", "conditions": [guard("bank_status", "verified"), guard("route", "account")]}]}), route("verify", guard("route", "verify")), route("offer", guard("route", "offer")), route("identity")]),
-        "verify": {"name": "verify", "node_type": "api_request", "passthrough": True, "pre_actions": [api("verify_identity", {"customer_id": "{{customer_id}}", "field": "date_of_birth", "answer": "{{verification_answer}}"}, post_process_code=identity)], "transitions": [route("decision")]},
+        "verify": {"name": "verify", "node_type": "api_request", "passthrough": True, "pre_actions": [api("verify_identity", {"customer_id": "{{customer_id}}", "field": "{{verification_question}}", "answer": "{{verification_answer}}"}, post_process_code=identity)], "transitions": [route("decision")]},
         "account": {"name": "account", "node_type": "api_request", "passthrough": True, "pre_actions": [api("get_account", {"customer_id": "{{customer_id}}"})], "transitions": [route("offer")]},
         "offer": code_node("offer", offer, [route("confirmation", guard("route", "confirmation")), route("end")]),
         "confirmation": {"name": "confirmation", "node_type": "conversation", "on_enter": {"type": "tts", "text": "Do you confirm {{validated_amount}} on {{validated_date}}?"}, "extraction_schema": [{"name": "approval", "type": "string", "enum": ["", "yes", "no", "question", "human", "plan", "hardship", "dispute"], "min_confidence": 0, "max_retries": 1}, {"name": "correction", "type": "string", "enum": ["", "yes", "no"], "min_confidence": 0, "max_retries": 1}], "transitions": [route("approval")]},
@@ -135,11 +147,11 @@ elif not vars.get('recorded') and vars.get('offer_fingerprint') and vars.get('of
     workflow["tools"][0]["config"]["alwaysRunsAt"] = ["end_of_call"]
     policy = {"security": {
         "customer_id_field": "customer_id", "customer_id_variable": "customer_id",
-        "identity_nodes": ["identity"], "trusted_variables": ["bank_status", "record_authorization", "recorded", "validated_product", "validated_amount", "validated_date", "offer_fingerprint", "readback_fingerprint", "exception", "route", "stage", "write_attempts", "write_result", "persuasion_attempts", "party_confirmation", "verification_answer", "transfer_authorization", "transfer_queue"],
+        "identity_nodes": ["identity"], "trusted_variables": ["bank_status", "record_authorization", "recorded", "validated_product", "validated_amount", "validated_date", "offer_fingerprint", "readback_fingerprint", "exception", "route", "stage", "write_attempts", "write_result", "persuasion_attempts", "party_confirmation", "verification_answer", "verification_question", "code_length", "transfer_authorization", "transfer_queue"],
         "bank_verification_variable": "bank_status", "bank_gate": {"node": "decision", "variable": "bank_status", "operand": "verified", "target": "account"},
         "account_nodes": ["account"], "offer_guard_node": "offer", "approval_guard_node": "approval", "confirmation_nodes": ["confirmation"], "record_nodes": ["record"], "close_nodes": ["end"],
-        "decision_node": "decision", "write_attempt_limit": 2, "party_confirmation_operand": "confirmed", "identity_answer_request_field": "answer", "validation_identity_request_context": {"field": "date_of_birth"},
-        "validation_state": {"proposed_amount": "amount", "proposed_date": "date", "approval_event": "approval", "correction": "correction", "decision_event": "speech_event", "decision_date": "speech_date", "identity_answer": "speech_answer", "persuasion_attempts": "persuasion_attempts", "party_confirmation": "party_confirmation", "recorded": "recorded", "offer_fingerprint": "offer_fingerprint", "readback_fingerprint": "readback_fingerprint", "exception": "exception", "route": "route", "stage": "stage", "write_attempts": "write_attempts", "write_result": "write_result"},
+        "decision_node": "decision", "write_attempt_limit": 2, "party_confirmation_operand": "confirmed", "identity_answer_request_field": "answer", "validation_identity_request_context": {"field": "date_of_birth"}, "validation_identity_code_request_context": {"field": "phone_last4"},
+        "validation_state": {"proposed_amount": "amount", "proposed_date": "date", "approval_event": "approval", "correction": "correction", "decision_event": "speech_event", "decision_date": "speech_date", "identity_answer": "speech_answer", "speech_text": "speech_text", "persuasion_attempts": "persuasion_attempts", "party_confirmation": "party_confirmation", "recorded": "recorded", "offer_fingerprint": "offer_fingerprint", "readback_fingerprint": "readback_fingerprint", "exception": "exception", "route": "route", "stage": "stage", "write_attempts": "write_attempts", "write_result": "write_result"},
         "validation_events": {name: name for name in ("yes", "no", "question", "human", "plan", "hardship", "dispute", "third_party")},
         "validation_routes": {name: name for name in ("account", "confirmation", "record", "offer", "transfer", "end")},
         "validation_fixture": {"customer_id": "c-fixture", "amount": "25", "date": "2026-10-14", "bank_product": "p1", "now": "2026-10-14T09:00:00", "bank_status": "verified", "stage": "payment"},
@@ -148,6 +160,7 @@ elif not vars.get('recorded') and vars.get('offer_fingerprint') and vars.get('of
         "validation_identity_fixture": {"bank_status": "verified", "stage": "identity", "speech_event": "question"},
         "validation_third_party_fixture": {"bank_status": "unverified", "stage": "identity", "party_confirmation": "confirmed", "speech_event": "third_party", "speech_answer": "tomorrow"},
         "validation_identity_answer_fixture": {"customer_id": "c-fixture", "bank_status": "unverified", "stage": "identity", "party_confirmation": "confirmed", "speech_event": "yes", "speech_answer": "1990-04-12"},
+        "validation_identity_code_fixture": {"customer_id": "c-fixture", "bank_status": "unverified", "stage": "identity_phone", "party_confirmation": "confirmed", "speech_event": "yes", "speech_text": "0014", "code_length": 4},
         "action_guards": {"transfer_to_agent": {"node": "transfer_guard", "variable": "transfer_authorization", "operand": "authorized"}},
     }, "source_rules": [{"id": "A1", "source": "brief.md", "line": 1, "text": "rule", "stage": "identity"}], "unsupported": []}
     checks = [
@@ -219,7 +232,7 @@ class ValidationTests(unittest.TestCase):
     def test_renamed_customer_binding(self):
         arguments = candidate()
         arguments[1]["security"].update(customer_id_field="call_secret", customer_id_variable="session_secret")
-        for fixture_name in ("validation_fixture", "validation_identity_answer_fixture"):
+        for fixture_name in ("validation_fixture", "validation_identity_answer_fixture", "validation_identity_code_fixture"):
             fixture = arguments[1]["security"][fixture_name]
             fixture["session_secret"] = fixture.pop("customer_id")
         for item in arguments[2]["paths"].values():
@@ -536,11 +549,11 @@ class ValidationTests(unittest.TestCase):
                 self.assert_rejected(arguments, reason)
 
     def test_decision_controls_require_real_distinct_trusted_state(self):
-        for role in ("decision_event", "decision_date", "identity_answer", "persuasion_attempts", "party_confirmation"):
+        for role in ("decision_event", "decision_date", "identity_answer", "speech_text", "persuasion_attempts", "party_confirmation"):
             with self.subTest(role=role):
                 arguments = candidate()
                 arguments[1]["security"]["validation_state"][role] = "unused_" + role
-                if role not in ("decision_event", "decision_date", "identity_answer"):
+                if role not in ("decision_event", "decision_date", "identity_answer", "speech_text"):
                     arguments[1]["security"]["trusted_variables"].append("unused_" + role)
                 self.assert_rejected(arguments, "actual guard reads/writes")
         arguments = candidate()
@@ -626,6 +639,93 @@ class ValidationTests(unittest.TestCase):
         self.assertTrue(all(check["ok"] for check in report["checks"] if check["name"].startswith("independent_identity_date_words_") or check["name"] == "independent_identity_date_in_main_date"), report)
         self.assert_rejected(arguments, "independent_missing_identity_speech: unsafe chain entered verify")
 
+    def test_full_text_identity_paths_preserve_dates_and_leading_zero_codes(self):
+        arguments = candidate()
+        report = validate(*arguments)
+        self.assertTrue(report["ok"], report)
+        text_checks = [check for check in report["checks"] if "_in_speech_text_" in check["name"]]
+        self.assertEqual(len(text_checks), 5)
+        self.assertTrue(all(check["ok"] for check in text_checks), report)
+        state = dict(arguments[1]["security"]["validation_identity_code_fixture"], speech_text="My last four digits are 0014.")
+        code = arguments[0]["nodes"]["decision"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]["default"]
+        _run_check(code, {"vars": state, "expected": {"verification_answer": "0014", "verification_question": "phone_last4", "bank_status": "unverified", "route": "verify", "speech_text": ""}})
+
+    def test_full_text_identity_mutations_cannot_pass_older_date_checks(self):
+        for original, replacement, reason in (
+            ("answer = vars.get('speech_answer', '') or current_date or speech_text", "answer = vars.get('speech_answer', '') or current_date", "independent_identity_date_in_speech_text_period"),
+            ("clean = re.sub(r'[._]+$', '', answer.strip().lower()).strip()", "clean = answer.strip().lower()", "independent_identity_date_in_speech_text_period"),
+            ("vars['verification_answer'] = clean", "vars['verification_answer'] = str(int(clean))", "unchanged canonical code verification answer"),
+            ("vars['verification_question'] = 'phone_last4'", "vars['verification_question'] = 'date_of_birth'", "spoken identity code request did not match"),
+            ("vars['speech_text'] = ''", "vars['speech_text'] = speech_text", "consumed extraction speech_text was not cleared"),
+        ):
+            with self.subTest(reason=reason):
+                arguments = candidate()
+                code = arguments[0]["nodes"]["decision"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]
+                self.assertIn(original, code["default"])
+                code["default"] = code["default"].replace(original, replacement)
+                report = validate(*arguments)
+                self.assertTrue(all(check["ok"] for check in report["checks"] if check["name"].startswith("independent_identity_date_words_") or check["name"] == "independent_identity_date_in_main_date"), report)
+                self.assert_rejected(arguments, reason)
+
+    def test_full_text_identity_still_needs_an_answer_event_and_no_stale_code(self):
+        for fault, reason in (
+            ("if vars.get('stage') == 'identity_phone' and not event and not answer and vars.get('verification_answer'):\n    vars['route'] = 'verify'\n", "independent_missing_identity_code_speech: unsafe chain entered verify"),
+            ("if vars.get('stage') == 'identity_phone' and event == 'third_party':\n    vars['route'] = 'verify'\n", "independent_latest_third_party_blocks_identity_code: unsafe chain entered verify"),
+        ):
+            with self.subTest(reason=reason):
+                arguments = candidate()
+                code = arguments[0]["nodes"]["decision"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]
+                code["default"] += fault
+                report = validate(*arguments)
+                self.assertTrue(all(check["ok"] for check in report["checks"] if "_in_speech_text_" in check["name"]), report)
+                self.assert_rejected(arguments, reason)
+        arguments = candidate()
+        code = arguments[0]["nodes"]["decision"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]
+        code["default"] = code["default"].replace("elif party == 'confirmed' and answer and event == 'yes':", "elif party == 'confirmed' and answer:")
+        report = validate(*arguments)
+        self.assertTrue(all(check["ok"] for check in report["checks"] if "_in_speech_text_" in check["name"]), report)
+        for kind in ("date", "code"):
+            for event in ("empty", "unknown", "question"):
+                name = f"independent_identity_{kind}_{event}_event_blocks_verification"
+                self.assertFalse(next(check for check in report["checks"] if check["name"] == name)["ok"], report)
+
+    def test_identity_code_fixture_and_context_cannot_be_fake(self):
+        for value in ("", "0014.", 14, "1234", "0"):
+            with self.subTest(code=value):
+                arguments = candidate()
+                arguments[1]["security"]["validation_identity_code_fixture"]["speech_text"] = value
+                self.assert_rejected(arguments, "canonical numeric string in speech_text")
+        for context in ({}, {"unknown": "phone_last4"}, {"field": "unknown"}, {"answer": "0014"}):
+            with self.subTest(context=context):
+                arguments = candidate()
+                arguments[1]["security"]["validation_identity_code_request_context"] = context
+                self.assert_rejected(arguments, "validation_identity_code_request_context")
+
+    def test_word_date_checks_cannot_fall_back_to_other_fresh_fixture_fields(self):
+        arguments = candidate()
+        arguments[1]["security"]["validation_identity_answer_fixture"].update(speech_date="1990-04-12", speech_text="1990-04-12")
+        code = arguments[0]["nodes"]["decision"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]
+        code["default"] = code["default"].replace("answer = vars.get('speech_answer', '') or current_date or speech_text", "answer = vars.get('speech_answer', '')\nif not re.fullmatch(r'[0-9]{4}-[0-9]{2}-[0-9]{2}', answer):\n    answer = current_date or speech_text")
+        report = validate(*arguments)
+        word_checks = [check for check in report["checks"] if check["name"].startswith("independent_identity_date_words_")]
+        self.assertEqual(len(word_checks), 6)
+        self.assertTrue(all(not check["ok"] for check in word_checks), report)
+        self.assert_rejected(arguments, "independent_identity_date_words_day_first")
+
+    def test_identity_code_length_is_not_fixed_by_the_validator(self):
+        arguments = candidate()
+        fixture = arguments[1]["security"]["validation_identity_code_fixture"]
+        fixture.update(speech_text="000014", code_length=6)
+        arguments[1]["security"]["validation_identity_code_request_context"] = {"field": "security_code"}
+        schema = arguments[2]["paths"]["/verify_identity"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+        schema["properties"]["field"]["enum"] = ["date_of_birth", "security_code"]
+        body = arguments[0]["nodes"]["verify"]["pre_actions"][0]["function"]["parameters"]["properties"]["body"]
+        body["properties"]["field"]["enum"] = ["date_of_birth", "security_code"]
+        code = arguments[0]["nodes"]["decision"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]
+        code["default"] = code["default"].replace("vars['verification_question'] = 'phone_last4'", "vars['verification_question'] = 'security_code'")
+        report = validate(*arguments)
+        self.assertTrue(report["ok"], report)
+
     def test_spoken_identity_date_requires_the_declared_request_question(self):
         arguments = candidate()
         body = arguments[0]["nodes"]["verify"]["pre_actions"][0]["function"]["parameters"]["properties"]["body"]
@@ -655,9 +755,12 @@ class ValidationTests(unittest.TestCase):
         schema["required"] = ["question_kind" if name == "field" else name for name in schema["required"]]
         body = arguments[0]["nodes"]["verify"]["pre_actions"][0]["function"]["parameters"]["properties"]["body"]
         body["properties"]["question_kind"] = body["properties"].pop("field")
-        body["properties"]["question_kind"].update(enum=["birthdate", "phone_last4"], default="birthdate")
+        body["properties"]["question_kind"].update(enum=["birthdate", "phone_last4"])
         body["required"] = ["question_kind" if name == "field" else name for name in body["required"]]
         arguments[1]["security"]["validation_identity_request_context"] = {"question_kind": "birthdate"}
+        arguments[1]["security"]["validation_identity_code_request_context"] = {"question_kind": "phone_last4"}
+        code = arguments[0]["nodes"]["decision"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]
+        code["default"] = code["default"].replace("vars['verification_question'] = 'date_of_birth'", "vars['verification_question'] = 'birthdate'")
         report = validate(*arguments)
         self.assertTrue(report["ok"], report)
 

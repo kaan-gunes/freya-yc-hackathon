@@ -392,7 +392,8 @@ def _independent_checks(nodes, snippets, security, checks):
     identity_resume = security.get("validation_identity_resume_fixture", {})
     third_party_fixture = security.get("validation_third_party_fixture", {})
     identity_answer_fixture = security.get("validation_identity_answer_fixture", {})
-    required_roles = ("proposed_amount", "proposed_date", "approval_event", "correction", "decision_event", "decision_date", "identity_answer", "persuasion_attempts", "party_confirmation", "recorded", "offer_fingerprint", "readback_fingerprint", "exception", "route", "stage", "write_attempts", "write_result")
+    identity_code_fixture = security.get("validation_identity_code_fixture", {})
+    required_roles = ("proposed_amount", "proposed_date", "approval_event", "correction", "decision_event", "decision_date", "identity_answer", "speech_text", "persuasion_attempts", "party_confirmation", "recorded", "offer_fingerprint", "readback_fingerprint", "exception", "route", "stage", "write_attempts", "write_result")
     for label, data, names in (("validation_state", roles, required_roles), ("validation_events", events, ("yes", "no", "question", "human", "plan", "hardship", "dispute", "third_party")), ("validation_routes", routes, ("account", "confirmation", "record", "offer", "transfer", "end"))):
         if not isinstance(data, dict) or any(not isinstance(data.get(name), str) or not data[name] for name in names):
             return [{"name": "independent_contract", "ok": False, "error": f"security.{label} needs every declared string role"}]
@@ -417,7 +418,7 @@ def _independent_checks(nodes, snippets, security, checks):
     if not isinstance(third_party_fixture, dict) or not third_party_fixture or not third_party_fixture.get(roles["stage"]):
         contract_errors.append("third-party fixture must provide current identity state and fresh speech inputs")
     reserved = {security.get("bank_verification_variable"), authorization, security.get("customer_id_variable")}
-    if {roles[name] for name in ("decision_event", "decision_date", "identity_answer", "persuasion_attempts", "party_confirmation")} & reserved:
+    if {roles[name] for name in ("decision_event", "decision_date", "identity_answer", "speech_text", "persuasion_attempts", "party_confirmation")} & reserved:
         contract_errors.append("decision controls must be separate from bank, record and customer controls")
     decision = security.get("decision_node")
     decision_inputs = {field.get("name") for node in nodes.values() if any(item.get("target_node") == decision for item in node.get("transitions", [])) for field in node.get("extraction_schema", [])}
@@ -427,6 +428,8 @@ def _independent_checks(nodes, snippets, security, checks):
         contract_errors.append("identity_answer must name fresh speech consumed by the decision node")
     if roles["decision_date"] not in decision_inputs or roles["decision_date"] in trusted:
         contract_errors.append("decision_date must name fresh speech consumed by the decision node")
+    if roles["speech_text"] not in decision_inputs or roles["speech_text"] in trusted:
+        contract_errors.append("speech_text must name fresh speech consumed by the decision node")
     if isinstance(third_party_fixture, dict) and not any(third_party_fixture.get(name) for name in decision_inputs - {roles["decision_event"]}):
         contract_errors.append("third-party fixture needs a nonempty actual speech field besides decision_event")
     canonical_identity_answer = None
@@ -438,39 +441,47 @@ def _independent_checks(nodes, snippets, security, checks):
             raise ValueError("identity answer fixture needs a valid canonical ISO raw answer")
     except (TypeError, ValueError) as exc:
         contract_errors.append(f"validation_identity_answer_fixture: {exc}")
+    canonical_identity_code = None
+    if not isinstance(identity_code_fixture, dict) or not identity_code_fixture.get(roles["stage"]):
+        contract_errors.append("validation_identity_code_fixture needs current pending-code identity state")
+    else:
+        canonical_identity_code = identity_code_fixture.get(roles["speech_text"])
+        if not isinstance(canonical_identity_code, str) or not re.fullmatch(r"0[0-9]+", canonical_identity_code):
+            contract_errors.append("validation_identity_code_fixture needs a canonical numeric string in speech_text with a leading zero")
     verification_requests = [(identifier, tool) for identifier, node in nodes.items() for tool in node.get("pre_actions", []) if tool.get("function", {}).get("name") in security.get("verification_tools", ["verify_identity"])]
     answer_request_field = security.get("identity_answer_request_field")
     if not isinstance(answer_request_field, str) or not answer_request_field or answer_request_field == security.get("customer_id_field") or not any(answer_request_field in tool.get("function", {}).get("parameters", {}).get("properties", {}).get("body", {}).get("properties", {}) for _, tool in verification_requests):
         contract_errors.append("identity_answer_request_field must name an actual verification request property")
     identity_request_context = security.get("validation_identity_request_context")
-    if not isinstance(identity_request_context, dict) or not identity_request_context:
-        contract_errors.append("validation_identity_request_context must declare the pending question's request properties")
-    elif any(not isinstance(name, str) or not name or name in (security.get("customer_id_field"), answer_request_field) or not isinstance(value, (str, int, float, bool)) or isinstance(value, str) and "{{" in value for name, value in identity_request_context.items()):
-        contract_errors.append("validation_identity_request_context needs literal values and cannot include customer or answer fields")
-    else:
-        def context_schema_matches(tool):
-            properties = tool.get("function", {}).get("parameters", {}).get("properties", {}).get("body", {}).get("properties", {})
-            if answer_request_field not in properties or not set(identity_request_context) <= set(properties):
+    identity_code_context = security.get("validation_identity_code_request_context")
+    def context_schema_matches(tool, context):
+        properties = tool.get("function", {}).get("parameters", {}).get("properties", {}).get("body", {}).get("properties", {})
+        if answer_request_field not in properties or not set(context) <= set(properties):
+            return False
+        for name, value in context.items():
+            field = properties[name]
+            expected_type = {"string": str, "number": (int, float), "integer": int, "boolean": bool}.get(field.get("type"))
+            if not expected_type or not isinstance(value, expected_type):
                 return False
-            for name, value in identity_request_context.items():
-                field = properties[name]
-                expected_type = {"string": str, "number": (int, float), "integer": int, "boolean": bool}.get(field.get("type"))
-                if not expected_type or not isinstance(value, expected_type):
-                    return False
-                if field.get("type") in ("number", "integer") and (isinstance(value, bool) or not -float("inf") < value < float("inf")):
-                    return False
-                if "enum" in field and not any(_json_equal(value, operand) for operand in field["enum"]):
-                    return False
-            return True
-        if not any(context_schema_matches(tool) for _, tool in verification_requests):
-            contract_errors.append("validation_identity_request_context must match real verification request property types and enums")
+            if field.get("type") in ("number", "integer") and (isinstance(value, bool) or not -float("inf") < value < float("inf")):
+                return False
+            if "enum" in field and not any(_json_equal(value, operand) for operand in field["enum"]):
+                return False
+        return True
+    for label, context in (("validation_identity_request_context", identity_request_context), ("validation_identity_code_request_context", identity_code_context)):
+        if not isinstance(context, dict) or not context:
+            contract_errors.append(f"{label} must declare the pending question's request properties")
+        elif any(not isinstance(name, str) or not name or name in (security.get("customer_id_field"), answer_request_field) or not isinstance(value, (str, int, float, bool)) or isinstance(value, str) and "{{" in value for name, value in context.items()):
+            contract_errors.append(f"{label} needs literal values and cannot include customer or answer fields")
+        elif not any(context_schema_matches(tool, context) for _, tool in verification_requests):
+            contract_errors.append(f"{label} must match real verification request property types and enums")
     offer, approval = security.get("offer_guard_node"), security.get("approval_guard_node")
     record_nodes = security.get("record_nodes", [])
     readbacks = security.get("confirmation_nodes", [])
     for identifier, required_reads, required_writes in (
         (offer, ("proposed_amount", "proposed_date"), ("offer_fingerprint", "readback_fingerprint")),
         (approval, ("approval_event", "correction", "recorded", "offer_fingerprint", "readback_fingerprint", "write_attempts", "write_result"), ("route", "write_attempts")),
-        (decision, ("decision_event", "decision_date", "identity_answer", "persuasion_attempts", "party_confirmation"), ("decision_event", "decision_date", "identity_answer", "persuasion_attempts", "party_confirmation")),
+        (decision, ("decision_event", "decision_date", "identity_answer", "speech_text", "persuasion_attempts", "party_confirmation"), ("decision_event", "decision_date", "identity_answer", "speech_text", "persuasion_attempts", "party_confirmation")),
     ):
         if identifier not in snippets:
             contract_errors.append(f"missing guard snippet {identifier}")
@@ -733,32 +744,39 @@ def _independent_checks(nodes, snippets, security, checks):
             raise ValueError("missing speech consumed a persuasion attempt")
     run("independent_missing_decision_speech", missing_speech)
 
-    def identity_state():
-        state = copy.deepcopy(identity_answer_fixture)
+    def identity_state(input_fixture=identity_answer_fixture):
+        state = copy.deepcopy(input_fixture)
         state[security.get("bank_verification_variable")] = "unverified"
         state[roles["party_confirmation"]] = party_confirmed
         state[authorization] = ""
         return state
 
-    def identity_date_answer(raw_answer, main_date=None):
-        state = identity_state()
-        if main_date is not None:
-            event = state.get(roles["decision_event"], "")
-            for field in decision_inputs:
-                state[field] = ""
-            state[roles["decision_event"]] = event
-            state[roles["decision_date"]] = main_date
-        state[roles["identity_answer"]] = raw_answer
+    def current_identity_state(input_fixture, field, value):
+        state = identity_state(input_fixture)
+        event = state.get(roles["decision_event"], "")
+        for name in decision_inputs:
+            state[name] = ""
+        state[roles["decision_event"]] = event
+        state[field] = value
+        return state
+
+    def identity_request_boundary(state, expected_answer, request_context, label):
         state, target = advance(decision, state, (offer, *readbacks, *record_nodes, *security.get("account_nodes", [])))
         assert_denied(state)
         if nodes[target].get("node_type") != "api_request" or target not in {identifier for identifier, _ in verification_requests}:
-            raise ValueError("complete spoken identity date did not reach a verification API action")
+            raise ValueError(f"complete spoken identity {label} did not reach a verification API action")
         requests = bound_request(target, state)
-        canonical_requests = [body for name, body in requests if name in security.get("verification_tools", ["verify_identity"]) and body.get(answer_request_field) == canonical_identity_answer]
+        canonical_requests = [body for name, body in requests if name in security.get("verification_tools", ["verify_identity"]) and body.get(answer_request_field) == expected_answer]
         if not canonical_requests:
-            raise ValueError("spoken identity date was not bound as the canonical ISO verification answer")
-        if not any(all(name in body and _json_equal(body[name], value) for name, value in identity_request_context.items()) for body in canonical_requests):
-            raise ValueError("spoken identity date request did not match the declared pending-question context")
+            form = "canonical ISO" if label == "date" else "unchanged canonical code"
+            raise ValueError(f"spoken identity {label} was not bound as the {form} verification answer")
+        if not any(all(name in body and _json_equal(body[name], value) for name, value in request_context.items()) for body in canonical_requests):
+            raise ValueError(f"spoken identity {label} request did not match the declared pending-question context")
+
+    def identity_date_answer(raw_answer, main_date=None):
+        field, value = (roles["identity_answer"], raw_answer) if main_date is None else (roles["decision_date"], main_date)
+        state = current_identity_state(identity_answer_fixture, field, value)
+        identity_request_boundary(state, canonical_identity_answer, identity_request_context, "date")
     day = datetime.date.fromisoformat(canonical_identity_answer)
     month = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December")[day.month - 1]
     suffix = "th" if 11 <= day.day % 100 <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(day.day % 10, "th")
@@ -772,15 +790,24 @@ def _independent_checks(nodes, snippets, security, checks):
     ):
         run(f"independent_identity_date_words_{label}", lambda answer=answer: identity_date_answer(answer))
     run("independent_identity_date_in_main_date", lambda: identity_date_answer("", f"{day.day} {month} {day.year:04d}"))
+    for label, speech in (
+        ("period", f"{day.day} {month} {day.year:04d}."),
+        ("period_underscore", f"{day.day} {month} {day.year:04d}._"),
+        ("prefix", f"My date of birth is {day.day} {month} {day.year:04d}."),
+    ):
+        run(f"independent_identity_date_in_speech_text_{label}", lambda speech=speech: identity_request_boundary(current_identity_state(identity_answer_fixture, roles["speech_text"], speech), canonical_identity_answer, identity_request_context, "date"))
+    code_prefix = "My last four digits are" if len(canonical_identity_code) == 4 else "My verification code is"
+    for label, speech in (("period", canonical_identity_code + "."), ("prefix", code_prefix + " " + canonical_identity_code + ".")):
+        run(f"independent_identity_code_in_speech_text_{label}", lambda speech=speech: identity_request_boundary(current_identity_state(identity_code_fixture, roles["speech_text"], speech), canonical_identity_code, identity_code_context, "code"))
 
-    def missing_identity_speech():
-        state = identity_state()
+    def missing_identity_speech(input_fixture=identity_answer_fixture, cached_answer=canonical_identity_answer):
+        state = identity_state(input_fixture)
         for _, tool in verification_requests:
             field = tool.get("function", {}).get("parameters", {}).get("properties", {}).get("body", {}).get("properties", {}).get(answer_request_field, {})
             value = field.get("default")
             placeholder = PLACEHOLDER.fullmatch(value) if isinstance(value, str) else None
             if placeholder:
-                state[placeholder.group(1)] = canonical_identity_answer
+                state[placeholder.group(1)] = cached_answer
         for field in decision_inputs:
             state[field] = ""
         state[security.get("bank_verification_variable")] = "unverified"
@@ -792,9 +819,22 @@ def _independent_checks(nodes, snippets, security, checks):
         if nodes[target].get("node_type") != "conversation" or not nodes[target].get("extraction_schema"):
             raise ValueError("missing identity speech must return to a real listener without a bank action")
     run("independent_missing_identity_speech", missing_identity_speech)
+    run("independent_missing_identity_code_speech", lambda: missing_identity_speech(identity_code_fixture, canonical_identity_code))
 
-    def latest_third_party():
-        state = copy.deepcopy(third_party_fixture)
+    def inactive_identity_event(input_fixture, speech, event):
+        state = current_identity_state(input_fixture, roles["speech_text"], speech)
+        state[roles["decision_event"]] = event
+        forbidden = (offer, *readbacks, *record_nodes, *security.get("account_nodes", []), *(identifier for identifier, _ in verification_requests))
+        state, target = advance(decision, state, forbidden)
+        assert_denied(state)
+        if nodes[target].get("node_type") != "conversation" or not nodes[target].get("extraction_schema"):
+            raise ValueError("inactive identity answer event must return to a real listener")
+    for kind, input_fixture, speech in (("date", identity_answer_fixture, f"{day.day} {month} {day.year:04d}."), ("code", identity_code_fixture, canonical_identity_code + ".")):
+        for label, event in (("empty", ""), ("unknown", "__unrecognized_event__"), ("question", events["question"])):
+            run(f"independent_identity_{kind}_{label}_event_blocks_verification", lambda input_fixture=input_fixture, speech=speech, event=event: inactive_identity_event(input_fixture, speech, event))
+
+    def latest_third_party(input_fixture=third_party_fixture):
+        state = copy.deepcopy(input_fixture)
         bank_var = security.get("bank_verification_variable")
         state[bank_var] = "unverified"
         state[authorization] = ""
@@ -809,6 +849,7 @@ def _independent_checks(nodes, snippets, security, checks):
         if nodes[target].get("node_type") == "api_request":
             bound_request(target, state)
     run("independent_latest_third_party_blocks_identity", latest_third_party)
+    run("independent_latest_third_party_blocks_identity_code", lambda: latest_third_party(identity_code_fixture))
     for operation, action_gate in security.get("action_guards", {}).items():
         def empty_action(action_gate=action_gate):
             state = step(action_gate["node"], {})

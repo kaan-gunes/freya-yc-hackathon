@@ -1,6 +1,6 @@
 # Second builder result - 2026-10-11
 
-Status: versions 2 and 3 failed PUB-01 for different identity-input bugs.
+Status: versions 2, 3 and 4 failed PUB-01 for different identity-input bugs.
 Follow-up compiler fixes and checks are in progress; no stable live pass is claimed.
 Dates in this report use Europe/Istanbul. Artifact names use UTC.
 
@@ -10,7 +10,9 @@ Code commits: `9b4764c` (`fix: keep phone decisions current and preserve test ev
 and `030cd23` (`fix: cover normal verification and bounded generator repairs`).
 Follow-up commit `881bd1c` validates spoken identity dates and uses sparse repairs.
 Commit `6482ae1` adds the pending-question request-context regression.
-All 58 repository tests pass, and the builder self-check passes.
+Commit `65ec36a` covers fresh identity dates in the general date input, with a
+paired check that denies cached answers when all current speech is empty.
+All 64 repository tests pass, and the builder self-check passes.
 Follow-up checks add normal identity completion, supplementary decision tests
 that cannot replace required guard tests, and three attempts within one deadline.
 
@@ -34,12 +36,22 @@ Follow-up checks reject silent extraction consuming persuasion, and a relative's
 identity answer after earlier first-party confirmation. Six new spoken-date
 checks send month-name, ordinal, comma and case variants through the actual
 decision and verification request. The resolved answer must be the same valid
-ISO date; account and record actions remain denied. The unit fixture has 31
+ISO date; account and record actions remain denied. The unit fixture has 44
 independent checks; the total depends on the candidate's secondary actions.
 A follow-up also checks the resolved request's sourced pending-question context,
 so a canonical date cannot be sent under a different security question. Its
 regression covers renamed API fields and operands. This change was made after
 the next run started; that run uses the validator snapshot from `881bd1c`.
+
+The latest fix consumes fresh full text when specialized identity inputs are
+empty. It allows bounded punctuation and a simple pending-question answer prefix,
+preserves numeric leading zeros, and requires a current suitable answer event.
+Thirteen additional independent checks resolve the real verification request
+for raw-text-only dates and codes, deny blank/cached phone answers, and block
+empty/unknown/question events and third-party phone answers. Each date-format
+probe clears every other current speech field, so a second canonical field
+cannot hide a broken parser. The numeric fixture requires a leading zero but
+has no global fixed length; a renamed six-digit question regression passes.
 
 The test helper saves session, simulation, iteration and call IDs early. It
 keeps execution, result reading and scoring separate, accumulates owned version
@@ -123,6 +135,29 @@ the real decision must still return to a listener without a verification action.
 | `20261010T214447691384Z` | Local validation stopped | 870.75 s | Neither |
 | `20261010T220403404639Z` | Budget ended during test | 1800.01 s | Version 2; recovered PUB-01 0/1 |
 | `20261010T224719208056Z` | Completed; gate failed | 664.02 s | Version 3; PUB-01 0/1 |
+| `20261010T230434314580Z` | Completed; gate failed | 1359.46 s | Version 4; PUB-01 0/1 |
+
+Run `20261010T230434314580Z` started from clean commit `65ec36a`. The first
+candidate had four local errors. Its sparse repair changed only the failing
+bank-flag initialization, close/confirmation manifests and a generated holiday
+expectation. The full repaired candidate passed 76 local checks (32 independent),
+Freya dry-run, version 4 publication, readback and export. PUB-01 completed 0/1
+in `build-the-builder/results/20261010T231706550643Z-404df3cd`, simulation
+`e50c8590-1ef3-4e3b-ab01-d75f8e6d1584`, iteration
+`c36c054f-2d98-4e25-926c-5cd000b51c39`, call
+`12d3ecc8-7f10-4540-bc7b-9ed35ed98d74`. Owned call metadata proves version 4.
+
+All 79 DOB answers were extracted only as the current event and full speech text;
+the identity-answer and general date fields were empty. The generated decision
+consumed full text but never used it for identity. It repeated the question and
+never called verification or recorded a promise. Exact local replay matches this
+failure. The actual answers end with `.` (78 replies) or `._` (one reply); bounded
+punctuation cleanup and guarded fresh-text fallback reach the correct request.
+Synthetic phone probes show the same risk for a punctuated or prefixed last-four
+answer. These are local probes, not live phone-stage evidence. Follow-up compiler
+checks cover both raw-text-only paths and the blank/cached-answer boundary.
+The helper reports 157 fallback-state route events, not 157 distinct decisions.
+No schema-write rejection, extraction error or unmatched route was found.
 
 ## Live Evidence
 
@@ -150,7 +185,7 @@ not reached, so that part still needs live evidence. A wrapper path fix allows
 the documented repository-relative resume command; its regression covers resume
 and custom case paths.
 
-Versions 2 and 3 failed the first gate, so no three-repeat or full Brief A claim is made.
+Versions 2, 3 and 4 failed the first gate, so no three-repeat or full Brief A claim is made.
 The next version must pass PUB-01 once, then three repetitions on the same
 published version, then all ten Brief A cases and correction/split-answer styles.
 Generated workflow files have not been edited by hand.

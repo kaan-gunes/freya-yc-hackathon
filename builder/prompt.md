@@ -70,7 +70,7 @@ validation_state: {proposed_amount, proposed_date, approval_event, correction,
                    recorded, offer_fingerprint, readback_fingerprint, exception,
                    route, stage, write_attempts, write_result, decision_event,
                    persuasion_attempts, party_confirmation, identity_answer,
-                   decision_date}
+                   decision_date, speech_text}
   # Values are actual vars keys, not example values.
 validation_events: {yes, no, question, human, plan, hardship, dispute, third_party}
   # Values are actual extraction enum operands.
@@ -93,6 +93,11 @@ validation_identity_answer_fixture: {complete pre-verification identity state,
 identity_answer_request_field: actual verification API answer property
 validation_identity_request_context: {actual verification question property:
                                      source-derived date-question operand}
+validation_identity_code_fixture: {complete pre-verification state for the
+                                  pending numeric-code security question,
+                                  canonical synthetic digits in speech_text}
+validation_identity_code_request_context: {actual verification question property:
+                                          source-derived numeric-code operand}
 validation_third_party_fixture: {complete pre-verification identity state with
                                 prior party confirmation and a fresh relative
                                 admission containing a complete identity answer
@@ -146,11 +151,19 @@ Bind customer_id from the call variable using default and question/answer from
 code state constrained by OpenAPI. Partial answers and parsing failures are not
 bank rejections. Use the exact bank hint and rejection budget. Use the API
 response's attempt count; do not charge local parsing failures.
-For a pending date security question, use the current raw identity answer or the
-current main date input when extraction put the date there instead. Copy and
-clear both before parsing. This fallback is only inside the confirmed-party,
-unverified identity path, after current exceptions/questions; it cannot change
-the selected question, count as approval, or reuse an earlier consumed date.
+For a pending security question, prefer the current raw identity answer, then
+the current main date input for a date question, then the current full speech
+text. Freya may extract ONLY the event and full text. Copy and clear every input
+before parsing. These fallbacks are only inside the confirmed-party, unverified
+identity path, after current exceptions/questions; they cannot change the
+selected question, count as approval, or reuse an earlier consumed answer.
+Require a current answer event suitable for that pending question; an empty,
+unknown, question or exception event cannot use raw text to start verification.
+Trim bounded surrounding whitespace and sentence punctuation (including '.' and
+'._') before exact parsing. Accept a simple answer prefix for the pending
+question, such as "My date of birth is" or "My last four digits are"; do not search
+arbitrary prose for digits. Preserve leading zeros in numeric security codes and
+check their sourced length. Parsing failures never count as bank rejections.
 Describe the main date field as payment/callback only and explicitly exclude
 identity dates, but do not depend on this description to make the path work.
 
@@ -338,7 +351,8 @@ Use min_confidence:0.0 and max_retries:1 for speech fields. Revalidate in code;
 confidence is not a safety gate. Each description requires ONLY the latest user
 message: never fill a missing amount/date/answer from earlier conversation.
 Absent fields must be empty strings. Include a speech-text field containing the
-latest utterance only. Unknown, invalid enum, rejected or absent extraction takes
+latest utterance verbatim, even when specialized answer/date fields are absent.
+Unknown, invalid enum, rejected or absent extraction takes
 a safe repeat of the exact current question. In particular a name confirmation
 may include polite words, the full name or contractions, and cannot select a new
 security question. The dialogue task is only the fixed stage instruction/question
@@ -442,6 +456,15 @@ answer and other speech, supplies the current word date only in decision_date,
 and requires the same real verification request, without another question.
 With all fresh identity speech empty, a cached canonical answer must not trigger
 verification. Complete bank verification with empty speech still loads account.
+Map speech_text to the actual distinct untrusted full-text input read and cleared
+by decision code. Independent checks leave only the current event and full text:
+a punctuated word-month date must reach the correct date verification request.
+Supply a complete pending numeric-code fixture after the earlier bank question,
+with a synthetic code (including a leading zero) in speech_text and its sourced
+request context. Raw-text-only "0014." and "My last four digits are 0014." must
+send unchanged digits to that question, not a date. The digits are fixture data,
+not policy; use the input's real format. Blanking all current speech must never
+send a cached code. Add generated regressions for both raw-text-only paths.
 Empty/rejected extraction is not a caller refusal or deliberate non-answer:
 repeat the current stage question without a new offer or persuasion use. Use a
 distinct event for a genuine non-answer where the brief calls for persuasion.
