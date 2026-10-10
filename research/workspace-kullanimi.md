@@ -53,6 +53,6 @@ Hazır dashboard denemesinde `customer_id` dolu ve geçerli bir test müşterisi
 - Aynı workflow'u güncelleyin; her denemede yeni workflow oluşturup listeyi doldurmayın.
 - Final için düzeltmeleri builder'a uygulayın. Builder'ın ürettiği final agentını sonradan elle düzenlemeyin.
 
-Her kişi mümkünse kendi hesabı ve aynı workspace'e bağlı kendi Freya API anahtarıyla çalışır. Arkadaşın workspace'e erişimi yoksa, erişim sağlanana kadar builder kodunu GitHub üzerinden geliştirip canlı testleri Kaan'ın bilgisayarından çalıştırabilirsiniz. GitHub reposuna erişmek, Freya workspace'ine erişim vermez.
+Yarışma kuralı gereği ekip başına tek Freya API anahtarı kullanılır. Aynı workspace'teki geliştirme ve test işlemleri ekibin bu anahtarıyla yapılır. Anahtar yalnız ekip içinde özel olarak paylaşılır. Arkadaşın dashboard'a erişimi yoksa, builder kodunu GitHub üzerinden geliştirip canlı testleri Kaan'ın bilgisayarından çalıştırabilirsiniz. GitHub reposuna erişmek, Freya workspace'ine erişim vermez.
 
 Freya API anahtarı ve ortak banka takım anahtarı `env.sh` içindedir; bu dosya GitHub'a gönderilmez. Aynı workspace'te çalışırken banka takım anahtarı da aynı kalır.

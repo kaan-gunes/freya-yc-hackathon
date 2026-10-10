@@ -34,7 +34,7 @@ cd freya-yc-hackathon
 cp build-the-builder/env.example build-the-builder/env.sh
 ```
 
-`build-the-builder/env.sh` dosyasına kendi Freya API anahtarınızı ve ekibin ortak banka test anahtarını yazın. **Banka takım anahtarını herkes aynı kullanmalı; en az 16 karakter gerekir.** Kaan'ın mevcut takım anahtarı Git'te bulunmaz; ekip içinde özel olarak paylaşılır. Her bilgisayar kendi `env.sh` dosyasını oluşturur.
+`build-the-builder/env.sh` dosyasına ekibin Freya API anahtarını ve ortak banka test anahtarını yazın. **Yarışma kuralı ekip başına tek Freya anahtarıdır. Banka takım anahtarını da herkes aynı kullanmalı; en az 16 karakter gerekir.** Anahtarlar Git'te bulunmaz; ekip içinde özel olarak paylaşılır. Her bilgisayar kendi yerel `env.sh` dosyasını oluşturur.
 
 Freya anahtarı test edeceğiniz agentın bulunduğu workspace'e erişmeli. Başka workspace'teki agent id bu kurulumun yerine geçmez.
 
