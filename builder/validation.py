@@ -350,6 +350,8 @@ def _validate(workflow, policy, openapi, checks):
         for placement, tool in entries:
             function = tool.get("function", {})
             name, handler = function.get("name"), function.get("handler")
+            if (node_id == "workflow" or placement == "tools") and (not isinstance(function.get("description"), str) or not function["description"].strip()):
+                fail(f"{node_id}/{name}: function.description must be a nonempty string")
             properties = function.get("parameters", {}).get("properties", {})
             if handler == "__function__:code_exec":
                 if kind != "code" or placement != "pre_actions":

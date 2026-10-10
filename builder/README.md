@@ -28,7 +28,7 @@ bash scripts/build-agent.sh build-the-builder/briefs/brief-a.md \
 
 Each run has a real wall-clock limit, at most 30 minutes, including model work
 and tests. Use the same slot to update the same workflow. The baseline is kept.
-One automatic repair is allowed if the first candidate fails local checks.
+One automatic repair is allowed if the first candidate fails local or Freya checks.
 All call code and policy are inside the workflow; no local server is needed.
 
 After the first real test passes, run three repeats against that same published

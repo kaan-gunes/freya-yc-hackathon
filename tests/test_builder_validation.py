@@ -22,7 +22,7 @@ def api(name, defaults, **extra):
     source = OPENAPI["paths"]["/" + name]["post"]["requestBody"]["content"]["application/json"]["schema"]
     fields = {key: dict(source["properties"][key], default=value) for key, value in defaults.items()}
     return dict(type="function", config={"maxRetries": 0}, function={
-        "name": name, "handler": "__function__:api_call", "parameters": {
+        "name": name, "handler": "__function__:api_call", "description": "Run " + name + " when the workflow requires it.", "parameters": {
             "type": "object", "properties": {
                 "url": {"type": "string", "default": OPENAPI["servers"][0]["url"] + "/" + name},
                 "method": {"type": "string", "default": "POST"},
@@ -246,6 +246,14 @@ class ValidationTests(unittest.TestCase):
         self.assertTrue(validate(*arguments)["ok"])
         arguments[0]["nodes"]["identity"]["tools"][0]["pre_process_code"] = "vars['bank_status'] = 'verified'"
         self.assert_rejected(arguments, "verification can only be activated")
+
+    def test_lifecycle_and_model_tools_require_descriptions(self):
+        for placement in ("lifecycle", "model"):
+            with self.subTest(placement=placement):
+                arguments = candidate()
+                tool = arguments[0]["tools"][0] if placement == "lifecycle" else arguments[0]["nodes"]["identity"]["tools"][0]
+                del tool["function"]["description"]
+                self.assert_rejected(arguments, "function.description must be a nonempty string")
 
 
 if __name__ == "__main__":

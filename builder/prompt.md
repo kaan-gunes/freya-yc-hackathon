@@ -205,8 +205,10 @@ Follow the supplied platform docs exactly. Omit agent_config, context_variables,
 editor coordinates and all null values. Initial and node name IDs must exist.
 Conversation: tools/extraction/transitions; action: pre_actions. Response mappings
 for tools are on tools; mappings for pre_actions are on the node. Every mapping
-path starts `data.`. Fixed backend values use default (never const). Every API
-body leaf has its schema type and default; include all OpenAPI required fields
+path starts `data.`. Fixed backend values use default (never const). Every tool
+function has a string description, including code actions and workflow-level
+lifecycle tools. Required platform metadata must not be omitted.
+Every API body leaf has its schema type and default; include all OpenAPI required fields
 in body.required. Any enum leaf has the exact supplied enum, including fixed
 queue/outcome leaves. Fixed fields may use a constant default or trusted variable.
 Use POST URL as OpenAPI server + path, Content-Type application/json.

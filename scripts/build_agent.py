@@ -287,9 +287,9 @@ def main():
         manifest["generation_attempts"] = []
         for attempt in (1, 2):
             purpose = ("Extract sourced policy and generate the portable workflow and local checks." if attempt == 1
-                       else "Repair the generated candidate using local validation errors and the same complete source inputs.")
+                       else "Repair the generated candidate using validation errors and the same complete source inputs.")
             event("model_begin", attempt=attempt, model=args.model or "Codex CLI default", purpose=purpose)
-            print("Generating policy and workflow with Codex." if attempt == 1 else "Repairing the candidate from local validation errors.", flush=True)
+            print("Generating policy and workflow with Codex." if attempt == 1 else "Repairing the candidate from validation errors.", flush=True)
             try:
                 returncode, stdout, stderr = invoke(command, deadline, env=model_environment(), input_text=model_prompt)
             except BudgetExpired as error:
@@ -330,31 +330,50 @@ def main():
             write_json(folder / "validation.json", report)
             write_json(folder / f"validation-attempt-{attempt}.json", report)
             valid = bool(report.get("valid", report.get("ok"))) and not report.get("errors")
+            event("local_validation", attempt=attempt, valid=valid, errors=report.get("errors", []))
+            if valid and not args.offline:
+                import freya
+                if lock is None:
+                    lock = (KIT / ".builder.lock").open("a")
+                    try:
+                        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    except BlockingIOError:
+                        raise RuntimeError("Another builder owns the local workspace lock; wait before validating or publishing.") from None
+                try:
+                    dry_run = freya.validate_workflow(slot, workflow)
+                except RuntimeError as error:
+                    dry_run = {"ok": False, "error": redact(str(error))}
+                    write_json(folder / "freya-validation.json", dry_run)
+                    write_json(folder / f"freya-validation-attempt-{attempt}.json", dry_run)
+                    if not re.search(r" -> (400|422):", str(error)):
+                        event("freya_validation", attempt=attempt, valid=False, error=redact(str(error)))
+                        raise
+                dry_run_failed = isinstance(dry_run, dict) and (
+                    dry_run.get("ok") is False or dry_run.get("success") is False or dry_run.get("errors"))
+                write_json(folder / "freya-validation.json", dry_run)
+                write_json(folder / f"freya-validation-attempt-{attempt}.json", dry_run)
+                report["freya_validation"] = dry_run
+                if dry_run_failed:
+                    report.setdefault("errors", []).append("Freya dry-run rejected the candidate: " + redact(json.dumps(dry_run, ensure_ascii=False)))
+                    report.update(ok=False, valid=False)
+                    valid = False
+                write_json(folder / "validation.json", report)
+                write_json(folder / f"validation-attempt-{attempt}.json", report)
+                event("freya_validation", attempt=attempt, valid=not dry_run_failed)
             manifest["generation_attempts"].append({"attempt": attempt, "model": model, "valid": valid,
                                                      "errors": report.get("errors", [])})
-            event("local_validation", attempt=attempt, valid=valid, errors=report.get("errors", []))
             if valid:
                 break
             model_prompt = (prompt + "\n=== PRIOR GENERATED CANDIDATE ===\n" + redact(raw_text)
-                            + "\n=== LOCAL VALIDATION ERRORS ===\n" + json.dumps(report, ensure_ascii=False)
+                            + "\n=== VALIDATION ERRORS ===\n" + redact(json.dumps(report, ensure_ascii=False))
                             + "\nReturn a complete corrected plain JSON object with policy/workflow/checks/uncertainties/summary. "
                             "Use only the original inputs for business facts. Do not weaken checks or skip source rules.\n")
         if not valid:
-            raise ValueError("Generated workflow failed local validation; see validation.json.")
-        import freya
+            raise ValueError("Generated workflow failed validation; see validation.json.")
         if args.offline:
             manifest["status"] = "completed_local"
             exit_code = 0
         else:
-            lock = (KIT / ".builder.lock").open("a")
-            try:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                raise RuntimeError("Another builder owns the local workspace lock; wait before publishing.") from None
-            dry_run = freya.validate_workflow(slot, workflow)
-            write_json(folder / "freya-validation.json", dry_run)
-            if isinstance(dry_run, dict) and (dry_run.get("success") is False or dry_run.get("errors")):
-                raise ValueError("Freya dry-run rejected the workflow; see freya-validation.json.")
             ids = freya.save_workflow(slot, workflow, state_file=str(KIT / ".freya-agents.json"))
             manifest.update(agent_id=ids["agent_id"], workflow_id=ids["workflow_id"])
             event("workflow_saved", **ids)
