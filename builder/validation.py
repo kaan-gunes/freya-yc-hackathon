@@ -24,8 +24,8 @@ SAFE_MODULES = {
     "copy": ("copy", "deepcopy"),
 }
 SAFE_BUILTINS = {name: getattr(builtins, name) for name in (
-    "abs", "all", "any", "bool", "dict", "enumerate", "float", "int", "isinstance",
-    "len", "list", "max", "min", "range", "reversed", "round", "set", "sorted",
+    "abs", "all", "any", "bool", "dict", "enumerate", "float", "format", "int", "isinstance",
+    "len", "list", "max", "min", "next", "range", "reversed", "round", "set", "sorted",
     "str", "sum", "tuple", "zip", "Exception", "ValueError", "TypeError",
     "KeyError", "IndexError", "ZeroDivisionError", "OverflowError", "AssertionError",
 )}

@@ -82,6 +82,10 @@ on the chat endpoint. The fixed sentence must include every opening requirement
 from the brief. Only name/party questions and general exceptions are allowed here.
 No expected identity answers, balances, products, or private fixture values appear
 in test_variables or identity prompts. Leave test_variables out entirely.
+Use fresh speech enums for natural-language intent. Do not require exact raw-text
+equality to a short phrase list: clear replies can contain polite words, names,
+punctuation and contractions. Raw speech may reject corrections or questions;
+it must not reject a clear positive sentence solely because it is longer.
 
 Separate party confirmation from bank identity. A third party cannot answer the
 security questions. Answer allowed caller questions before any repeat question.
@@ -256,6 +260,8 @@ Add one ordinary valid offer and one explicit confirmation check. Add calendar
 boundaries, swapped identity hint, amount non-finite, and retry-budget checks if
 they exercise logic you wrote. Use synthetic fixture values only in checks; never
 in production prompts/test_variables. These are guard tests, not official score.
+If guards inspect raw speech, test clear positive sentences with extra polite
+words and punctuation, alongside the mixed approval/correction rejection.
 
 Keep the generated implementation small enough to inspect. Reuse identical
 snippets only where safe, group related decisions in code, and keep dialogue

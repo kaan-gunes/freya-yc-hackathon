@@ -255,6 +255,15 @@ class ValidationTests(unittest.TestCase):
                 del tool["function"]["description"]
                 self.assert_rejected(arguments, "function.description must be a nonempty string")
 
+    def test_next_and_format_preserve_failed_business_result(self):
+        code = "product = next((p for p in vars.get('products', []) if p.get('product_id') == 'p1'), None)\nvars['display_amount'] = format(product['past_due'], '.2f')\nvars['recorded'] = result.get('data', {}).get('ok') is True\nvars['write_state'] = 'saved' if vars['recorded'] else 'failed'"
+        _parse(code)
+        _run_check(code, {
+            "vars": {"products": [{"product_id": "p2", "past_due": 250}, {"product_id": "p1", "past_due": 100}], "recorded": True},
+            "result": {"status": "success", "status_code": 200, "data": {"ok": False}},
+            "expected": {"display_amount": "100.00", "recorded": False, "write_state": "failed"},
+        })
+
 
 if __name__ == "__main__":
     unittest.main()
