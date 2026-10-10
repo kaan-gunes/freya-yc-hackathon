@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, call, patch
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -13,6 +13,25 @@ SPEC.loader.exec_module(helper)
 
 
 class TestHelperChecks(unittest.TestCase):
+    def test_get_503_is_bounded_but_writes_and_auth_errors_are_not_retried(self):
+        unavailable = RuntimeError("GET /simulation -> 503: API key validation temporarily unavailable")
+        api = Mock(side_effect=[unavailable, unavailable, {"status": "completed"}])
+        with patch.object(helper.time, "sleep") as sleep:
+            self.assertEqual(helper.freya_read_retry(api, "GET", "/simulation", workspaceId="mock"), {"status": "completed"})
+            self.assertEqual(api.call_count, 3)
+            self.assertEqual(sleep.call_args_list, [call(2), call(4)])
+        for method, status in (("POST", 503), ("GET", 401)):
+            api = Mock(side_effect=RuntimeError(f"{method} /simulation -> {status}: unavailable"))
+            with patch.object(helper.time, "sleep") as sleep, self.assertRaises(RuntimeError):
+                helper.freya_read_retry(api, method, "/simulation")
+            self.assertEqual(api.call_count, 1)
+            sleep.assert_not_called()
+        api = Mock(side_effect=unavailable)
+        with patch.object(helper.time, "sleep") as sleep, self.assertRaises(RuntimeError):
+            helper.freya_read_retry(api, "GET", "/simulation")
+        self.assertEqual(api.call_count, 4)
+        self.assertEqual(sleep.call_args_list, [call(2), call(4), call(8)])
+
     def test_incomplete_simulation_keeps_completed_evidence_without_a_score(self):
         simulations = []
         rows = [{"id": "case", "call_id": "call-1", "pass": True}]

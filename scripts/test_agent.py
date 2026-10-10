@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -65,6 +66,18 @@ def version_numbers(value):
     if isinstance(value, list):
         return [version for child in value for version in version_numbers(child)]
     return []
+
+
+def freya_read_retry(api, method, path, body=None, **params):
+    for attempt in range(4):
+        try:
+            return api(method, path, body, **params)
+        except RuntimeError as error:
+            if method != "GET" or not str(error).startswith(f"GET {path} -> 503:") or attempt == 3:
+                raise
+            delay = 2 ** (attempt + 1)
+            print(f"Freya GET returned 503; retrying in {delay} seconds ({attempt + 1}/3).", flush=True)
+            time.sleep(delay)
 
 
 def decode_bank_response(path, status, headers, raw):
@@ -167,6 +180,7 @@ def main():
     score.http = bank_http
     run_cases.http = bank_http
     original_run_once = run_cases.run_once
+    original_api = freya.api
     (folder / "calls").mkdir()
 
     def tracked_run_once(*arguments):
@@ -213,6 +227,7 @@ def main():
         with contextlib.redirect_stdout(Tee(sys.stdout, log)), contextlib.redirect_stderr(Tee(sys.stderr, log)):
             try:
                 lock = acquire_test_lock()
+                freya.api = lambda method, path, body=None, **params: freya_read_retry(original_api, method, path, body, **params)
                 run_cases.main()
                 results = json.loads((folder / "official-results.json").read_text())
                 report.update(status="completed", passed=results["passed"], total=results["total"])
@@ -228,6 +243,7 @@ def main():
                 exit_code = 2
             finally:
                 run_cases.run_once = original_run_once
+                freya.api = original_api
                 if lock:
                     lock.close()
     report["ended_at"] = now()
