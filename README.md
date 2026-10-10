@@ -10,6 +10,8 @@ Banka talimatları + OpenAPI → Builder → Freya'da telefon agentı → Test �
 
 ## Önce bunları okuyun
 
+**Yeni chat veya review için:** [Proje bağlamı ve devir notu](PROJECT_CONTEXT.md), ana fikri, alınan kararları ve son incelenen durumu bir araya getirir.
+
 1. [Starter kit README](build-the-builder/README.md): resmî başlangıç ve yarışma kuralları.
 2. [Freya workspace'ini kullanma](research/workspace-kullanimi.md): ortak çalışmayı basitçe anlatır.
 3. [Araştırma özeti](research/hackathon-arastirmasi.md): görev, puanlama ve geliştirme önerileri.
