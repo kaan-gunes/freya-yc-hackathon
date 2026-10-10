@@ -1,0 +1,11 @@
+.DS_Store
+**/env.sh
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+*.py[cod]
+build-the-builder/.freya-agents.json
+build-the-builder/.personas.json
+build-the-builder/results/
