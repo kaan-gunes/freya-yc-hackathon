@@ -52,14 +52,48 @@ The code revision includes whether the worktree has changes. Full model reasonin
 is not stored. Generated artifacts are local and ignored by Git.
 
 The local validator checks stage boundaries, API fields, Python syntax, and
-executes the generated guard examples with restricted Python. These examples
-cover wrong identity, bad amounts/dates, corrections, failed writes and duplicate
-promises. They do not prove that every generated policy decision is correct.
-Freya schema validation and server readback are separate online checks.
+executes generated guard examples with restricted Python. It also runs its own
+expected checks on shared state across offer, readback, approval and record.
+These cover valid recording, rejected offers followed by yes, changed offers,
+corrections, mixed exceptions, duplicate writes, failed/unknown writes, retry
+limits and returning from completed identity. Synthetic fixture inputs and
+variable roles come from the candidate; expected safety rules come from code.
+
+The graph checks require offer/readback guards on record paths, reachable actions
+and terminals, and reject unconditional action loops. Callback, transfer and
+note actions need code guards and trusted request fields. Python checks allow
+direct variable reads and literal-key writes, block variable-table aliases and
+real-clock aliases, and forbid request changes in pre-hooks. Only the final
+close hook may replace its outcome/reason body fields. These are supported-code
+checks, not a general Python sandbox or proof of every business rule. Time and
+calendar behavior still needs source checks and live cases.
+
+Listening nodes route every reply through code. They have no model tools or
+semantic routing fallback. Code consumes and clears plain string speech fields,
+handles exceptions, and selects the exact stage question. This local schema
+check does not prove the platform accepted each reset. Freya dry-run, readback,
+export and live call diagnostics provide separate evidence.
 
 Failures stop the run with a visible report. A missing key or an unfinished test
 is reported as not run or incomplete, with no invented score. Never copy secrets
 into prompts, reports or Git. `.env` and `env.sh` stay local.
+
+The test helper saves session, simulation, iteration and call identities as soon
+as they arrive. Its summary separates call execution, result reads and scoring.
+Each successful metadata source adds version evidence. Call versions use
+`entityVersionNumber` only for calls matched to this simulation and agent;
+dashboard versions are not test evidence. Call diagnostics expose rejected
+state writes, extraction errors and unmatched/fallback routes.
+
+If a read fails after a simulation was created, resume the saved run:
+
+```bash
+bash scripts/test-agent.sh --resume build-the-builder/results/RESULT_FOLDER
+```
+
+Resume uses saved bank sessions and only reads the known simulation. It does not
+repeat writes. An unknown create result without a simulation ID cannot be
+resumed automatically. Incomplete ledger reads have no invented score.
 
 ## Next checks
 

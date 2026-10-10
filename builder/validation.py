@@ -64,12 +64,16 @@ def _parse(code):
         raise ValueError("template braces in Python snippet")
     tree = ast.parse(code)
     for node in ast.walk(tree):
-        if isinstance(node, (ast.ClassDef, ast.Global, ast.Nonlocal)):
+        if isinstance(node, (ast.ClassDef, ast.Global, ast.Nonlocal, ast.NamedExpr)):
             raise ValueError(f"unsupported Python statement {type(node).__name__}")
         if isinstance(node, ast.Name) and node.id.startswith("__"):
             raise ValueError("private names are unavailable")
+        if isinstance(node, ast.Name) and node.id in UNSAFE_CALLS - {"now", "today", "utcnow"}:
+            raise ValueError(f"unsafe callable and aliases are unavailable: {node.id}")
         if isinstance(node, ast.Attribute) and (node.attr.startswith("_") or node.attr in UNSAFE_ATTRIBUTES):
             raise ValueError("private/runtime attributes are unavailable")
+        if isinstance(node, ast.Attribute) and node.attr in ("now", "today", "utcnow"):
+            raise ValueError("real-clock attributes and aliases are unavailable")
         if isinstance(node, ast.Import):
             if any(item.name not in SAFE_MODULES for item in node.names):
                 raise ValueError("import outside the standard-library allowlist")
@@ -89,14 +93,23 @@ def _parse(code):
 
 def _writes(tree):
     writes = set()
+    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
     for node in ast.walk(tree):
+        if isinstance(node, ast.arg) and node.arg == "vars":
+            raise ValueError("do not shadow the workflow variable table")
+        if isinstance(node, ast.Name) and node.id == "vars":
+            parent = parents.get(node)
+            direct_index = isinstance(parent, ast.Subscript) and parent.value is node
+            direct_method = isinstance(parent, ast.Attribute) and parent.value is node and isinstance(parents.get(parent), ast.Call) and parents[parent].func is parent
+            if not isinstance(node.ctx, ast.Load) or not (direct_index or direct_method):
+                raise ValueError("do not replace, alias or pass the workflow variable table")
         if isinstance(node, (ast.Assign, ast.AnnAssign)):
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
             if any(isinstance(target, ast.Name) and target.id == "vars" for target in targets) or isinstance(node.value, ast.Name) and node.value.id == "vars":
                 raise ValueError("do not replace or alias the workflow variable table")
         if isinstance(node, ast.Return) and isinstance(node.value, ast.Name) and node.value.id == "vars":
             raise ValueError("do not return the workflow variable table")
-        if isinstance(node, ast.Call) and any(isinstance(argument, ast.Name) and argument.id == "vars" for argument in node.args):
+        if isinstance(node, ast.Call) and any(isinstance(argument, ast.Name) and argument.id == "vars" for argument in node.args + [item.value for item in node.keywords]):
             raise ValueError("do not pass the workflow variable table to helpers")
         if isinstance(node, ast.Subscript) and isinstance(node.ctx, (ast.Store, ast.Del)) and isinstance(node.value, ast.Name) and node.value.id == "vars":
             if not isinstance(node.slice, ast.Constant) or not isinstance(node.slice.value, str):
@@ -117,6 +130,57 @@ def _writes(tree):
             elif node.func.attr not in ("get", "keys", "values", "items", "copy"):
                 raise ValueError("unsupported workflow variable mutation")
     return writes
+
+
+def _pre_hook_request(tree, lifecycle):
+    # Request hooks may edit closing outcome/reason only; other requests are immutable.
+    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    body_aliases = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Attribute) and isinstance(node.value.func.value, ast.Name) and node.value.func.value.id == "config" and node.value.func.attr == "get" and node.value.args and isinstance(node.value.args[0], ast.Constant) and node.value.args[0].value == "body":
+            body_aliases.update(target.id for target in node.targets if isinstance(target, ast.Name))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id == "config":
+            parent = parents.get(node)
+            if not lifecycle:
+                raise ValueError("pre-hook may not access or mutate request config")
+            if isinstance(parent, ast.Subscript) and parent.value is node:
+                if not isinstance(parent.slice, ast.Constant) or parent.slice.value != "body":
+                    raise ValueError("closing pre-hook may replace body only")
+                usage = parents.get(parent)
+                if isinstance(parent.ctx, ast.Store):
+                    if not isinstance(usage, ast.Assign) or not isinstance(usage.value, ast.Name) or usage.value.id not in body_aliases:
+                        raise ValueError("closing pre-hook must preserve the original request body")
+                elif isinstance(usage, ast.Subscript) and usage.value is parent:
+                    if not isinstance(usage.slice, ast.Constant) or usage.slice.value not in ("outcome", "reason"):
+                        raise ValueError("closing pre-hook may edit outcome/reason only")
+                elif isinstance(usage, ast.Attribute) and usage.value is parent:
+                    call = parents.get(usage)
+                    if usage.attr not in ("get", "pop") or not isinstance(call, ast.Call) or not call.args or not isinstance(call.args[0], ast.Constant) or call.args[0].value not in ("outcome", "reason"):
+                        raise ValueError("closing pre-hook may edit outcome/reason only")
+                else:
+                    raise ValueError("do not alias or pass closing request body")
+            elif isinstance(parent, ast.Attribute) and parent.value is node:
+                call = parents.get(parent)
+                if parent.attr != "get" or not isinstance(call, ast.Call) or not call.args or not isinstance(call.args[0], ast.Constant) or call.args[0].value != "body":
+                    raise ValueError("closing pre-hook may read body only")
+            else:
+                raise ValueError("do not alias or pass request config")
+        if isinstance(node, ast.Name) and node.id in body_aliases:
+            parent = parents.get(node)
+            if isinstance(node.ctx, ast.Store):
+                assignment = parents.get(node)
+                if not isinstance(assignment, ast.Assign) or not isinstance(assignment.value, ast.Call) or not isinstance(assignment.value.func, ast.Attribute) or not isinstance(assignment.value.func.value, ast.Name) or assignment.value.func.value.id != "config":
+                    raise ValueError("closing request body may not be replaced or aliased")
+            elif isinstance(parent, ast.Subscript) and parent.value is node:
+                if not isinstance(parent.slice, ast.Constant) or parent.slice.value not in ("outcome", "reason"):
+                    raise ValueError("closing pre-hook may edit outcome/reason only")
+            elif isinstance(parent, ast.Attribute) and parent.value is node:
+                call = parents.get(parent)
+                if parent.attr not in ("get", "pop") or not isinstance(call, ast.Call) or not call.args or not isinstance(call.args[0], ast.Constant) or call.args[0].value not in ("outcome", "reason"):
+                    raise ValueError("closing pre-hook may edit outcome/reason only")
+            elif not (isinstance(parent, ast.Assign) and parent.value is node and any(isinstance(target, ast.Subscript) and isinstance(target.value, ast.Name) and target.value.id == "config" for target in parent.targets)):
+                raise ValueError("do not alias or pass closing request body")
 
 
 def _safe_import(name, globals=None, locals=None, fromlist=(), level=0):
@@ -144,6 +208,16 @@ def _authorization_values(tree, variable):
                         yield value
             elif node.func.attr == "setdefault" and node.args and isinstance(node.args[0], ast.Constant) and node.args[0].value == variable:
                 yield node.args[1] if len(node.args) > 1 else ast.Constant(value=None)
+
+
+def _reads(tree):
+    fields = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Load) and isinstance(node.value, ast.Name) and node.value.id == "vars" and isinstance(node.slice, ast.Constant):
+            fields.add(node.slice.value)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id == "vars" and node.func.attr == "get" and node.args and isinstance(node.args[0], ast.Constant):
+            fields.add(node.args[0].value)
+    return fields
 
 
 def _execute(code, check, connection):
@@ -203,6 +277,7 @@ def _run_check(code, check):
                 raise ValueError(f"{key}: expected {expected!r}, got {actual!r}")
         if check.get("forbid_api") and output["config"] != check.get("config", {}):
             raise ValueError("forbid_api check changed the HTTP request")
+        return output
     finally:
         if process.is_alive():
             process.terminate()
@@ -223,6 +298,355 @@ def _exact_guard(condition, variable, operand):
             return any(implies(child) for child in children)
         return item.get("logic") == "or" and all(implies(child) for child in children)
     return isinstance(condition, dict) and condition.get("logic") == "or" and implies(condition)
+
+
+def _reachable(edges, starts, removed=()):
+    visited, pending = set(), list(starts)
+    while pending:
+        node = pending.pop()
+        if node in visited or node in removed:
+            continue
+        visited.add(node)
+        pending.extend(edges.get(node, ()))
+    return visited
+
+
+def _graph_checks(workflow, nodes, security):
+    errors, edges, always = [], {}, {}
+    for name, node in nodes.items():
+        edges[name] = set()
+        always[name] = set()
+        for transition in node.get("transitions", []):
+            target = transition.get("target_node")
+            if target in nodes:
+                edges[name].add(target)
+                if transition.get("condition") == {"operator": "always"}:
+                    always[name].add(target)
+        for key in ("passthrough_default_transition", "max_turn_transition"):
+            if node.get(key) in nodes:
+                edges[name].add(node[key])
+                if node.get("passthrough"):
+                    always[name].add(node[key])
+    initial = workflow.get("initial_node")
+    reachable = _reachable(edges, [initial])
+    required = set(security.get("account_nodes", []) + security.get("record_nodes", []) + security.get("confirmation_nodes", []) + [security.get("offer_guard_node"), security.get("approval_guard_node")])
+    required.update(name for name, node in nodes.items() if node.get("node_type") == "api_request")
+    required.update(gate.get("node") for gate in security.get("action_guards", {}).values() if isinstance(gate, dict))
+    for name in required - reachable:
+        errors.append(f"{name}: required guard/action is unreachable from initial_node")
+    roots = [initial, *workflow.get("global_nodes", {})]
+    before_offer = _reachable(edges, roots, [security.get("offer_guard_node")])
+    for name in set(security.get("confirmation_nodes", []) + security.get("record_nodes", [])) & before_offer:
+        errors.append(f"{name}: offer guard does not dominate readback/record")
+    before_readback = _reachable(edges, roots, security.get("confirmation_nodes", []))
+    for name in {security.get("approval_guard_node"), *security.get("record_nodes", [])} & before_readback:
+        errors.append(f"{name}: confirmation readback does not dominate approval/record")
+    terminals = {name for name, node in nodes.items() if node.get("node_type") == "end_call"}
+    reverse = {name: set() for name in nodes}
+    for source, targets in edges.items():
+        for target in targets:
+            reverse[target].add(source)
+    for name in reachable - _reachable(reverse, terminals):
+        errors.append(f"{name}: no path reaches an end_call terminal")
+    actions = {name for name, node in nodes.items() if node.get("node_type") in ("code", "api_request") and node.get("passthrough")}
+    for name in actions:
+        action_edges = {source: targets & actions for source, targets in always.items() if source in actions}
+        if name in _reachable(action_edges, action_edges.get(name, ())):
+            errors.append(f"{name}: unconditional action loop without user input")
+    return errors
+
+
+def _condition(condition, state):
+    if "logic" in condition:
+        values = [_condition(item, state) for item in condition.get("conditions", [])]
+        if not values or condition["logic"] not in ("and", "or"):
+            raise ValueError("unsupported grouped transition")
+        return all(values) if condition["logic"] == "and" else any(values)
+    operator = condition.get("operator")
+    value, operand = state.get(condition.get("variable"), ""), condition.get("operand", "")
+    if operator == "always":
+        return True
+    if operator in ("equals", "not_equals"):
+        equal = str(value) == str(operand)
+        return equal if operator == "equals" else not equal
+    if operator in ("greater_than", "less_than"):
+        return float(value) > float(operand) if operator == "greater_than" else float(value) < float(operand)
+    if operator == "contains":
+        return str(operand).lower() in str(value).lower()
+    if operator in ("is_set", "is_not_set"):
+        return bool(value) if operator == "is_set" else not bool(value)
+    raise ValueError(f"unsupported transition in independent chain: {operator}")
+
+
+def _independent_checks(nodes, snippets, security, checks):
+    """Use declared synthetic inputs, but keep every expected invariant in the builder."""
+    reports = []
+    roles = security.get("validation_state", {})
+    events = security.get("validation_events", {})
+    routes = security.get("validation_routes", {})
+    fixture = security.get("validation_fixture", {})
+    confirmation = security.get("validation_confirmation_fixture", {})
+    correction_fixture = security.get("validation_correction_fixture", {})
+    identity = security.get("validation_identity_fixture", {})
+    identity_resume = security.get("validation_identity_resume_fixture", {})
+    required_roles = ("proposed_amount", "proposed_date", "approval_event", "correction", "recorded", "offer_fingerprint", "readback_fingerprint", "exception", "route", "stage", "write_attempts", "write_result")
+    for label, data, names in (("validation_state", roles, required_roles), ("validation_events", events, ("yes", "no", "question", "human", "plan", "hardship", "dispute")), ("validation_routes", routes, ("account", "confirmation", "record", "offer", "transfer", "end"))):
+        if not isinstance(data, dict) or any(not isinstance(data.get(name), str) or not data[name] for name in names):
+            return [{"name": "independent_contract", "ok": False, "error": f"security.{label} needs every declared string role"}]
+    if len(set(roles.values())) != len(roles):
+        return [{"name": "independent_contract", "ok": False, "error": "validation_state roles must name different variables"}]
+    if not all(isinstance(data, dict) and data for data in (fixture, confirmation, identity)):
+        return [{"name": "independent_contract", "ok": False, "error": "independent checks need offer, confirmation and identity input fixtures"}]
+    trusted = set(security.get("trusted_variables", []))
+    contract_errors = []
+    for label, data, required in (("confirmation", confirmation, True), ("correction", correction_fixture, True), ("identity resume", identity_resume, False)):
+        if not isinstance(data, dict) or required and not data:
+            contract_errors.append(f"{label} fixture must provide fresh speech inputs")
+        elif set(data) & (trusted | {security.get("customer_id_variable")}):
+            contract_errors.append(f"{label} fixture may provide fresh speech only")
+    if not {roles[name] for name in ("recorded", "offer_fingerprint", "readback_fingerprint", "exception", "route", "stage", "write_attempts", "write_result")} <= trusted:
+        contract_errors.append("validation_state control roles must be trusted")
+    authorization = security.get("record_authorization_variable", "record_authorization")
+    authorized = security.get("record_authorization_operand", "authorized")
+    offer, approval = security.get("offer_guard_node"), security.get("approval_guard_node")
+    record_nodes = security.get("record_nodes", [])
+    readbacks = security.get("confirmation_nodes", [])
+    for identifier, required_reads, required_writes in (
+        (offer, ("proposed_amount", "proposed_date"), ("offer_fingerprint", "readback_fingerprint")),
+        (approval, ("approval_event", "correction", "recorded", "offer_fingerprint", "readback_fingerprint", "write_attempts", "write_result"), ("route", "write_attempts")),
+    ):
+        if identifier not in snippets:
+            contract_errors.append(f"missing guard snippet {identifier}")
+            continue
+        try:
+            tree = _parse(snippets[identifier][0])
+            if not {roles[name] for name in required_reads} <= _reads(tree) or not {roles[name] for name in required_writes} <= _writes(tree):
+                raise ValueError(f"{identifier}: validation roles must be the actual guard reads/writes")
+        except (ValueError, SyntaxError) as exc:
+            contract_errors.append(str(exc))
+    if contract_errors:
+        return [{"name": "independent_contract", "ok": False, "error": error} for error in contract_errors]
+
+    def step(identifier, state, result=None):
+        if identifier not in snippets:
+            raise ValueError(f"independent chain needs snippet {identifier}")
+        _writes(_parse(snippets[identifier][0]))
+        output = _run_check(snippets[identifier][0], {"vars": state, "result": result or {}, "expected": {}})["vars"]
+        for node in nodes.values():
+            if any(item.get("target_node") == identifier for item in node.get("transitions", [])):
+                for field in node.get("extraction_schema", []):
+                    if output.get(field.get("name")) != "":
+                        raise ValueError(f"consumed extraction {field.get('name')} was not cleared")
+        return output
+
+    def advance(identifier, state):
+        for _ in range(len(nodes) + 1):
+            node = nodes[identifier]
+            if node.get("node_type") != "code":
+                return state, identifier
+            state = step(identifier, state)
+            identifier = next((item["target_node"] for item in node.get("transitions", []) if _condition(item.get("condition", {}), state)), None)
+            if identifier not in nodes:
+                raise ValueError("independent chain has no deterministic next node")
+        raise ValueError("independent chain exceeded graph length without user input")
+
+    def assert_denied(state):
+        if state.get(authorization) == authorized:
+            raise ValueError("unsafe chain activated record authorization")
+
+    def valid_readback():
+        state = copy.deepcopy(fixture)
+        for field in (authorization, roles["recorded"], roles["offer_fingerprint"], roles["readback_fingerprint"]):
+            state[field] = ""
+        state[roles["write_attempts"]] = 0
+        state[roles["write_result"]] = ""
+        state, target = advance(offer, state)
+        if target not in readbacks or not state.get(roles["offer_fingerprint"]) or state.get(roles["readback_fingerprint"]) != state[roles["offer_fingerprint"]]:
+            raise ValueError("valid offer did not reach a matching current readback")
+        assert_denied(state)
+        return state
+
+    def confirm(state):
+        state.update(copy.deepcopy(confirmation))
+        state[roles["approval_event"]] = events["yes"]
+        return advance(approval, state)
+
+    def bound_request(target, state):
+        for tool in nodes[target].get("pre_actions", []):
+            body = tool.get("function", {}).get("parameters", {}).get("properties", {}).get("body", {})
+            for name, field in body.get("properties", {}).items():
+                value = field.get("default")
+                placeholder = PLACEHOLDER.fullmatch(value) if isinstance(value, str) else None
+                if placeholder:
+                    value = state.get(placeholder.group(1))
+                if name in body.get("required", []) and value in (None, ""):
+                    raise ValueError(f"authorized request has no bound {name}")
+                expected_type = {"string": str, "number": (int, float), "integer": int, "boolean": bool, "object": dict, "array": list}.get(field.get("type"))
+                if expected_type and not isinstance(value, expected_type):
+                    raise ValueError(f"authorized request has wrong runtime type for {name}")
+                if field.get("type") in ("number", "integer") and (isinstance(value, bool) or not -float("inf") < value < float("inf")):
+                    raise ValueError(f"authorized request has non-finite/boolean {name}")
+                if "enum" in field and value not in field["enum"]:
+                    raise ValueError(f"authorized request has invalid {name} enum")
+
+    def run(name, function):
+        report = {"name": name, "ok": False}
+        try:
+            function()
+            report["ok"] = True
+        except (ValueError, KeyError, TypeError, EOFError, SyntaxError) as exc:
+            report["error"] = str(exc)
+        reports.append(report)
+
+    def invalid_chain(field, value):
+        state = copy.deepcopy(fixture)
+        state[roles[field]] = value
+        state = step(offer, state)
+        state.update(copy.deepcopy(confirmation))
+        state[roles["approval_event"]] = events["yes"]
+        state = step(approval, state)
+        assert_denied(state)
+
+    for value in ("-1", "0", "NaN", "Infinity"):
+        run(f"independent_invalid_amount_{value}", lambda value=value: invalid_chain("proposed_amount", value))
+    run("independent_invalid_date", lambda: invalid_chain("proposed_date", "2026-02-30"))
+    for check in checks:
+        if isinstance(check, dict) and check.get("node_id") == offer and any(check.get("name", "").startswith(category) for category in ("invalid_amount", "invalid_date")):
+            def invalid_boundary(check=check):
+                state = copy.deepcopy(fixture)
+                state.update(copy.deepcopy(check.get("vars", {})))
+                state = step(offer, state)
+                state.update(copy.deepcopy(confirmation))
+                state[roles["approval_event"]] = events["yes"]
+                assert_denied(step(approval, state))
+            run("independent_boundary_" + check["name"], invalid_boundary)
+
+    def positive():
+        state, target = confirm(valid_readback())
+        if target not in record_nodes or state.get(authorization) != authorized:
+            raise ValueError("valid current yes did not reach an authorized record action")
+        bound_request(target, state)
+        state = step(f"{target}:create_promise:post", state, {"status": "success", "status_code": 200, "data": {"ok": True}})
+        if state.get(roles["recorded"]) != "recorded":
+            raise ValueError("successful business result did not mark the current product recorded")
+        state, target = confirm(state)
+        assert_denied(state)
+        if target in record_nodes:
+            raise ValueError("recorded product reached a second record action")
+    run("independent_valid_record_and_duplicate", positive)
+
+    def changed_readback():
+        state = valid_readback()
+        state[roles["offer_fingerprint"]] += ":changed"
+        state, _ = confirm(state)
+        assert_denied(state)
+    run("independent_stale_readback", changed_readback)
+
+    def corrected():
+        state = valid_readback()
+        state.update(copy.deepcopy(confirmation))
+        state[roles["approval_event"]] = events["yes"]
+        state[roles["correction"]] = "yes"
+        state = step(approval, state)
+        assert_denied(state)
+        state = valid_readback()
+        state.update(copy.deepcopy(correction_fixture))
+        state[roles["correction"]] = "yes"
+        state = step(approval, state)
+        assert_denied(state)
+        next_node = next((item["target_node"] for item in nodes[approval].get("transitions", []) if _condition(item.get("condition", {}), state)), None)
+        state, target = advance(next_node, state)
+        if target not in readbacks or state.get(roles["offer_fingerprint"]) != state.get(roles["readback_fingerprint"]) or not state.get(roles["readback_fingerprint"]):
+            raise ValueError("correction did not return through offer validation and fresh readback")
+        state, target = confirm(state)
+        if target not in record_nodes or state.get(authorization) != authorized:
+            raise ValueError("fresh explicit yes after correction could not record")
+    run("independent_correction_requires_readback", corrected)
+
+    def rejected(event):
+        state = valid_readback()
+        state.update(copy.deepcopy(confirmation))
+        state[roles["approval_event"]] = events[event]
+        state[authorization] = authorized
+        state = step(approval, state)
+        assert_denied(state)
+    for event in ("no", "question"):
+        run(f"independent_{event}_clears_authorization", lambda event=event: rejected(event))
+
+    def exception(event):
+        state = valid_readback()
+        state.update(copy.deepcopy(confirmation))
+        state[roles["approval_event"]] = events[event]
+        state[roles["correction"]] = "yes"
+        state[roles["proposed_amount"]] = "100"
+        state = step(approval, state)
+        assert_denied(state)
+        if state.get(roles["exception"]) != events[event] and state.get(roles["route"]) in (routes["confirmation"], routes["offer"], routes["record"]):
+            raise ValueError("exception was lost before its safe decision")
+        next_node = next((item["target_node"] for item in nodes[approval].get("transitions", []) if _condition(item.get("condition", {}), state)), None)
+        state, target = advance(next_node, state)
+        assert_denied(state)
+        if target in record_nodes + readbacks or state.get(roles["route"]) in (routes["confirmation"], routes["offer"]):
+            raise ValueError("exception with correction became an ordinary offer/readback")
+        if nodes[target].get("node_type") == "api_request":
+            bound_request(target, state)
+    for event in ("human", "plan", "dispute"):
+        run(f"independent_{event}_with_correction", lambda event=event: exception(event))
+
+    def record_result(result, unknown=False):
+        state, target = confirm(valid_readback())
+        if target not in record_nodes:
+            raise ValueError("failure check could not reach record action")
+        state = step(f"{target}:create_promise:post", state, result)
+        if state.get(roles["recorded"]) == "recorded":
+            raise ValueError("failed/unknown business result marked current product recorded")
+        if unknown:
+            state = step(approval, state)
+            assert_denied(state)
+    run("independent_failed_record", lambda: record_result({"status": "success", "status_code": 200, "data": {"ok": False}}))
+    run("independent_unknown_record_no_retry", lambda: record_result({"status": "error", "error": "timeout"}, True))
+
+    def retry_limit():
+        limit = security.get("write_attempt_limit")
+        if type(limit) is not int or limit < 1:
+            raise ValueError("security.write_attempt_limit must be a positive integer")
+        state, target = confirm(valid_readback())
+        failure = {"status": "success", "status_code": 200, "data": {"ok": False}}
+        state = step(f"{target}:create_promise:post", state, failure)
+        if limit > 1:
+            state = step(approval, state)
+            if state.get(authorization) != authorized or int(state.get(roles["write_attempts"], 0)) != 2:
+                raise ValueError("allowed retry did not preserve authorization and count one new attempt")
+            state = step(f"{target}:create_promise:post", state, failure)
+        state[roles["write_attempts"]] = limit
+        state = step(approval, state)
+        assert_denied(state)
+        if int(state.get(roles["write_attempts"], 0)) > limit:
+            raise ValueError("failed record exceeded source write attempt limit")
+    run("independent_failed_record_retry_limit", retry_limit)
+
+    def identity_return():
+        state = copy.deepcopy(identity)
+        bank_var = security.get("bank_verification_variable")
+        state[bank_var] = "verified"
+        state, target = advance(security.get("decision_node"), state)
+        assert_denied(state)
+        if target not in security.get("account_nodes", []) and nodes[target].get("node_type") == "conversation" and target not in readbacks:
+            if state.get(roles["stage"]) == "identity" or not identity_resume:
+                raise ValueError("verified question recovery needs changed stage and fresh identity resume fixture")
+            state.update(copy.deepcopy(identity_resume))
+            state, target = advance(security.get("decision_node"), state)
+        if target not in security.get("account_nodes", []) or state.get(roles["stage"]) == "identity" or state.get(bank_var) != "verified":
+            raise ValueError("verified identity plus question did not resume account loading")
+        assert_denied(state)
+    run("independent_verified_identity_question_return", identity_return)
+    for operation, action_gate in security.get("action_guards", {}).items():
+        def empty_action(action_gate=action_gate):
+            state = step(action_gate["node"], {})
+            if state.get(action_gate["variable"]) == action_gate["operand"]:
+                raise ValueError("action guard authorized without caller intent or validated inputs")
+        run(f"independent_{operation}_missing_inputs", empty_action)
+    return reports
 
 
 def validate(workflow, policy, openapi, checks):
@@ -264,6 +688,13 @@ def _validate(workflow, policy, openapi, checks):
         fail("security.customer_id_field and customer_id_variable must be strings")
     authorization = security.get("record_authorization_variable", "record_authorization")
     authorized = security.get("record_authorization_operand", "authorized")
+    action_guards = security.get("action_guards", {})
+    if not isinstance(action_guards, dict):
+        fail("security.action_guards must be an object")
+        action_guards = {}
+    for name, action_gate in action_guards.items():
+        if not isinstance(action_gate, dict) or all_nodes.get(action_gate.get("node"), {}).get("node_type") != "code" or action_gate.get("variable") not in trusted or not isinstance(action_gate.get("operand"), str) or not action_gate["operand"]:
+            fail(f"security.action_guards.{name} needs a code node, trusted variable and operand")
     for variable in (bank_var, authorization):
         if not isinstance(variable, str) or not variable or variable not in trusted:
             fail(f"trusted_variables must include security control {variable!r}")
@@ -275,7 +706,7 @@ def _validate(workflow, policy, openapi, checks):
             for node_id in security.get(key, []):
                 if node_id not in all_nodes:
                     fail(f"security.{key}: unknown node {node_id}")
-                elif key in ("identity_nodes", "confirmation_nodes") and all_nodes[node_id].get("node_type") != "conversation":
+                elif key == "confirmation_nodes" and all_nodes[node_id].get("node_type") != "conversation":
                     fail(f"security.{key}: {node_id} must be a conversation")
     if set(workflow.get("test_variables", {})) & trusted:
         fail("test_variables may not initialize trusted state")
@@ -321,10 +752,17 @@ def _validate(workflow, policy, openapi, checks):
             fail(f"{node_id}: conversation pre_actions would be stripped")
         if node.get("tools") and kind != "conversation":
             fail(f"{node_id}: action-node tools would be stripped")
+        if node.get("tools"):
+            fail(f"{node_id}: model-visible tools are unsupported; use engine actions")
         transitions = node.get("transitions", [])
         if not isinstance(transitions, list):
             fail(f"{node_id}: transitions must be a list")
             transitions = []
+        if kind == "conversation":
+            if node.get("passthrough") or node.get("loop_condition") or len(transitions) != 1 or transitions[0].get("condition") != {"operator": "always"} or all_nodes.get(transitions[0].get("target_node"), {}).get("node_type") != "code":
+                fail(f"{node_id}: listening conversation needs one always route to decision code")
+            if node.get("on_enter", {}).get("type") != "tts" or not node.get("on_enter", {}).get("text"):
+                fail(f"{node_id}: listening conversation needs a fixed TTS question")
         if node.get("passthrough") and (not transitions or transitions[-1].get("condition") != {"operator": "always"}):
             fail(f"{node_id}: passthrough needs final always transition")
         for transition in transitions:
@@ -344,13 +782,15 @@ def _validate(workflow, policy, openapi, checks):
                 else:
                     incoming[target].append((node_id, {"operator": "always"}))
         for extraction in node.get("extraction_schema", []):
+            if extraction.get("type") != "string" or extraction.get("validation_pattern") or extraction.get("format") or extraction.get("min_confidence") != 0 or extraction.get("max_retries") != 1 or "enum" in extraction and "" not in extraction["enum"]:
+                fail(f"{node_id}: extraction must be a blankable string with min_confidence=0 and max_retries=1")
             if extraction.get("name") in trusted or extraction.get("name") == customer_variable:
                 fail(f"{node_id}: extraction overwrites trusted variable {extraction['name']}")
         entries = [("tools", tool) for tool in node.get("tools", [])] + [("pre_actions", tool) for tool in node.get("pre_actions", [])]
         for placement, tool in entries:
             function = tool.get("function", {})
             name, handler = function.get("name"), function.get("handler")
-            if (node_id == "workflow" or placement == "tools") and (not isinstance(function.get("description"), str) or not function["description"].strip()):
+            if not isinstance(function.get("description"), str) or not function["description"].strip():
                 fail(f"{node_id}/{name}: function.description must be a nonempty string")
             properties = function.get("parameters", {}).get("properties", {})
             if handler == "__function__:code_exec":
@@ -371,6 +811,7 @@ def _validate(workflow, policy, openapi, checks):
                     fail(f"{node_id}/{name}: wrong API URL or method")
                 body = properties.get("body", {})
                 fields = body.get("properties", {})
+                guarded_write = node_id in security.get("record_nodes", []) or name in action_guards or name in ("schedule_callback", "transfer_to_agent", "add_note")
                 for field in schema.get("required", []):
                     if field not in fields:
                         fail(f"{node_id}/{name}: missing required body field {field}")
@@ -398,7 +839,7 @@ def _validate(workflow, policy, openapi, checks):
                             fail(f"{node_id}/{name}: default outside enum for {field}")
                     if placement == "pre_actions" and "default" not in field_schema:
                         fail(f"{node_id}/{name}: action body {field} must be baked from state")
-                    if node_id in security.get("record_nodes", []) and field != customer_field and (not dynamic or dynamic.group(1) not in trusted):
+                    if guarded_write and field != customer_field and (not dynamic or dynamic.group(1) not in trusted):
                         fail(f"{node_id}/{name}: record field {field} must bind trusted validated state")
                 if customer_field not in schema.get("required", []) or fields.get(customer_field, {}).get("default") != "{{" + customer_variable + "}}":
                     fail(f"{node_id}/{name}: customer_id binding must match the required API field and fixed call variable")
@@ -410,7 +851,7 @@ def _validate(workflow, policy, openapi, checks):
                     fail(f"{node_id}/{name}: bank read/write must run in an engine action")
                 if name not in verification_tools and name != "get_account" and tool.get("config", {}).get("maxRetries") != 0:
                     fail(f"{node_id}/{name}: writes need maxRetries=0")
-                if node_id in security.get("record_nodes", []) and tool.get("pre_process_code", "").strip():
+                if guarded_write and tool.get("pre_process_code", "").strip():
                     fail(f"{node_id}/{name}: record arguments must be validated before entry, not in a pre-hook")
                 for suffix, field in (("pre", "pre_process_code"), ("post", "post_process_code")):
                     if tool.get(field, "").strip():
@@ -422,6 +863,8 @@ def _validate(workflow, policy, openapi, checks):
                         fail(f"{node_id}/{name}: bank gate must be set by the verification post-hook")
                     if mapping.get("variable") == authorization:
                         fail(f"{node_id}/{name}: response_mapping may not write record authorization")
+                    if mapping.get("variable") in {item.get("variable") for item in action_guards.values() if isinstance(item, dict)}:
+                        fail(f"{node_id}/{name}: response_mapping may not write action authorization")
             elif handler != "__function__:end_call" or kind != "end_call":
                 fail(f"{node_id}: unsupported or early lifecycle handler {handler}")
         if kind == "code" and node_id not in snippets:
@@ -431,10 +874,20 @@ def _validate(workflow, policy, openapi, checks):
         try:
             tree = _parse(code)
             writes = _writes(tree)
+            if customer_variable in writes:
+                fail(f"{identifier}: code may not overwrite the call customer identifier")
+            if hook == "pre":
+                _pre_hook_request(tree, identifier.startswith("workflow:"))
             if identifier != security.get("approval_guard_node"):
                 for value in _authorization_values(tree, authorization):
                     if not isinstance(value, ast.Constant) or value.value == authorized:
                         fail(f"{identifier}: only the approval guard may activate record authorization")
+            for name, action_gate in action_guards.items():
+                if not isinstance(action_gate, dict) or identifier == action_gate.get("node"):
+                    continue
+                for value in _authorization_values(tree, action_gate.get("variable")):
+                    if not isinstance(value, ast.Constant) or value.value == action_gate.get("operand"):
+                        fail(f"{identifier}: only {name} guard may activate action authorization")
             if bank_var in writes:
                 if operation in verification_tools and hook == "post":
                     bank_writers.append(identifier)
@@ -445,7 +898,7 @@ def _validate(workflow, policy, openapi, checks):
     if not bank_writers:
         fail("bank verification has no trusted verification post-hook writer")
     gate = security.get("bank_gate", {})
-    if not isinstance(gate, dict) or gate.get("variable") != bank_var or gate.get("operand") != "verified" or gate.get("node") not in security.get("identity_nodes", []) or gate.get("target") not in security.get("account_nodes", []):
+    if not isinstance(gate, dict) or gate.get("variable") != bank_var or gate.get("operand") != "verified" or gate.get("node") not in all_nodes or gate.get("target") not in security.get("account_nodes", []):
         fail("security.bank_gate must identify the trusted verified route into account")
         gate = {}
     for node_id in security.get("account_nodes", []):
@@ -453,6 +906,8 @@ def _validate(workflow, policy, openapi, checks):
             fail(f"{node_id}: account node must contain exactly one get_account action")
         if node_id in globals_ or node_id == workflow.get("initial_node") or not incoming.get(node_id):
             fail(f"{node_id}: account action must be reached through bank gate")
+        if len(incoming.get(node_id, [])) != 1:
+            fail(f"{node_id}: account action needs exactly one bank-gated incoming edge")
         for source, condition in incoming.get(node_id, []):
             if source != gate.get("node") or not _exact_guard(condition, bank_var, "verified"):
                 fail(f"{node_id}: account route bypasses trusted bank verification")
@@ -466,6 +921,17 @@ def _validate(workflow, policy, openapi, checks):
                 fail(f"{node_id}: record route bypasses immutable authorization")
     for node_id, placement, tool in api_entries:
         name = tool.get("function", {}).get("name")
+        if name not in (*verification_tools, "get_account", "create_promise", "close_call"):
+            action_gate = action_guards.get(name, {})
+            if not action_gate:
+                fail(f"{node_id}/{name}: missing security.action_guards entry")
+            if node_id in globals_ or node_id == workflow.get("initial_node") or not incoming.get(node_id):
+                fail(f"{node_id}/{name}: action must be reachable through its guard")
+            if len(incoming.get(node_id, [])) != 1:
+                fail(f"{node_id}/{name}: action needs exactly one guard incoming edge")
+            for source, condition in incoming.get(node_id, []):
+                if source != action_gate.get("node") or not _exact_guard(condition, action_gate.get("variable"), action_gate.get("operand")):
+                    fail(f"{node_id}/{name}: action route bypasses its trusted guard")
         required_nodes = "account_nodes" if name == "get_account" else "record_nodes" if name == "create_promise" else "close_nodes" if name == "close_call" else ""
         if required_nodes and node_id != "workflow" and node_id not in security.get(required_nodes, []):
             fail(f"{node_id}/{name}: API action omitted from security.{required_nodes}")
@@ -494,6 +960,9 @@ def _validate(workflow, policy, openapi, checks):
     closing_entries = [entry for entry in api_entries if entry[2].get("function", {}).get("name") == "close_call"]
     if len(closing_entries) != 1:
         fail("workflow must declare close_call exactly once")
+    if globals_:
+        fail("global_nodes must be empty; fresh exceptions belong in decision code")
+    errors.extend(_graph_checks(workflow, all_nodes, security))
     if not isinstance(checks, list):
         checks = []
         fail("checks must be an array")
@@ -536,4 +1005,9 @@ def _validate(workflow, policy, openapi, checks):
             report["error"] = str(exc)
             fail(f"check {report['name']}: {exc}")
         reports.append(report)
+    independent = _independent_checks(all_nodes, snippets, security, checks)
+    reports.extend(independent)
+    for report in independent:
+        if not report["ok"]:
+            fail(f"check {report['name']}: {report['error']}")
     return {"ok": not errors, "valid": not errors, "errors": errors, "checks": reports}

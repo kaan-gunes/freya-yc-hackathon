@@ -65,7 +65,40 @@ record_nodes: [nodes containing create_promise]
 record_authorization_variable: the guard-only string flag
 record_authorization_operand: "authorized"
 close_nodes: [terminal nodes; if explicit close action is used, that node too]
+decision_node: code node processing each ordinary caller reply
+validation_state: {proposed_amount, proposed_date, approval_event, correction,
+                   recorded, offer_fingerprint, readback_fingerprint, exception,
+                   route, stage, write_attempts, write_result}
+  # Values are actual vars keys, not example values.
+validation_events: {yes, no, question, human, plan, hardship, dispute}
+  # Values are actual extraction enum operands.
+validation_routes: {account, confirmation, record, offer, transfer, end}
+  # Values are actual route operands written by code.
+write_attempt_limit: maximum explicit record attempts from the brief/API
+validation_fixture: {complete synthetic vars for a valid offer before offer guard}
+validation_confirmation_fixture: {fresh confirmation speech fields for explicit yes}
+validation_correction_fixture: {fresh confirmation speech with correction=yes
+                                and the valid fixture's same amount/date stated}
+validation_identity_fixture: {synthetic verified state still at identity,
+                              fresh question, account products not yet loaded}
+validation_identity_resume_fixture: {fresh speech accepting the return to
+                                     account loading, if the question needs
+                                     a separate fixed listening reply}
+action_guards: {schedule_callback: {node, variable, operand},
+                transfer_to_agent: {node, variable, operand}}
+  # Include only operations actually used; add add_note if required by input.
 ```
+
+Map validation_state.approval_event and correction to the RAW extracted fields
+read and cleared by approval_guard, not normalized mirrors written by the guard.
+Map proposed_amount/date to the actual offer guard inputs. The confirmation
+fixture contains only extracted fields; it cannot reset retry_mode, authorization
+or any trusted field. Make each mapped role an actual input/output of its guard.
+The correction fixture also contains only extracted fields. It explicitly states
+new amount/date input so the guard can revalidate and reread; a correction marker
+without changed values must instead ask for the missing detail.
+Use direct config['body']['outcome']/['reason'] assignment (and reason removal)
+in the close hook; do not alias the request or its body.
 
 Use those two identifier binding fields in every API call. Names in the following
 design paragraphs describe semantic roles; if the input names a field differently,
@@ -91,17 +124,30 @@ Separate party confirmation from bank identity. A third party cannot answer the
 security questions. Answer allowed caller questions before any repeat question.
 Do not infer name confirmation from an ambiguous greeting. Use the brief's limit.
 
-Only verify_identity may be a model-visible bank API tool. Bind customer_id from
-the call variable using default, and constrain question fields by the OpenAPI.
-Call only when a complete answer has been collected; partial answers and parsing
-failures are not bank rejections. Use the exact bank hint and rejection budget.
-Use the API response's attempt count; do not charge local parsing failures.
+Use NO model-visible tools. Extract each identity answer, check completeness in
+the decision code, then route to an engine verify_identity api_request pre_action.
+Bind customer_id from the call variable using default and question/answer from
+code state constrained by OpenAPI. Partial answers and parsing failures are not
+bank rejections. Use the exact bank hint and rejection budget. Use the API
+response's attempt count; do not charge local parsing failures.
 
 The verify_identity post-hook must reset its status on EACH result, handle
 transport failure separately, inspect the current `result['data']` body, and set
 the trusted bank flag to "verified" only from successful complete bank verification.
 Strings "false" and "False" are false, never use their Python truthiness.
 Add a concise what_to_do_next to the result and remove header fields.
+Completing bank verification must also change stage to account-pending and clear
+the completed identity question. The next route loads the account exactly once.
+At the start of decision code, reconcile verified + identity/account-pending
+before handling an ordinary question. It must never fall into payment logic with
+no bank products. Human/other source-priority interrupts remain possible. A
+question answered between verification and account loading resumes account
+loading, without repeating the completed identity question.
+Reconcile the stage without consuming the message: source-priority exceptions
+must be handled before account loading even in account-resume. A plan/human/
+dispute/hardship message in this return state keeps its meaning and parameters.
+If a fixed listener answers the question first, use the raw-only identity resume
+fixture to test the next fresh answer on the SAME state reaching account.
 
 There is exactly one transition into each account action, from bank_gate.node,
 whose deterministic grouped condition checks bank_gate.variable == "verified".
@@ -136,6 +182,13 @@ current yes, no correction, a still-valid offer/readback fingerprint, and no sav
 promise for that product. Corrections clear confirmation and pass through the
 offer guard before a fresh readback. "Yes, but change the date" is a correction.
 Questions are not approvals. Same amount/date corrections still need rereading.
+Handle current human/plan/dispute and other source-priority exceptions BEFORE
+ordinary amount/date correction. Carry their amount/date parameters to the
+decision code; do not erase the event when correction is present. Hardship with a
+voluntary customer offer follows the input's specific exception, not a blanket
+transfer. At every approval, independently revalidate the current bank product,
+amount/date, offer-valid flag, and readback fingerprint. A previous rejected
+offer cannot become authorized just because the next message is yes.
 
 Only approval_guard_node may transition to a record action, and only via an exact
 grouped authorization == "authorized" condition. Every record action is an
@@ -173,19 +226,34 @@ in the export, with no local files, external LLM service, or bank API beyond inp
 Include the brief's third party, wrong number, deceased, refusal, already-paid,
 dispute, hardship, plan request, human request, scam and unanswered question paths.
 Critical interrupts must work before and after identity where the brief permits.
-Local deterministic routes precede global nodes on Freya. A broad always route
-or stale enum can hide an interrupt; avoid these on conversation nodes. Use stage
-specific fresh extraction names or explicit resetting when re-entering nodes.
+Use global_nodes: {}. Every listening conversation has exactly one ordinary
+always transition to its decision/approval code, no loop_condition, no semantic
+router and no model tools. The code handles ALL exceptions from fresh extraction
+before choosing a stage route. This always route is safe because interrupts live
+in the same decision code, and no tool-result event occurs in listening nodes.
+Fixed on_enter TTS asks the exact current question and waits for a caller reply;
+do not mark listening nodes passthrough. Action nodes alone pass through.
 Account and recording gates must also require the current exception state to be
 clear, or handle fresh exceptions in local deterministic routes before the gate.
 Do not depend on semantic global interrupts to beat a matching deterministic gate.
 Use source priority for hardship vs persuasion/plan request; voluntary offers
 remain possible where allowed. Counter thresholds and API enums are from inputs.
+Keep hardship context until that negotiation is resolved. A voluntary offer does
+not erase the no-persuasion requirement. If the customer then rejects its
+readback, follow the hardship support/decline path without a persuasion offer.
+When the caller accepts the first offer of help instead of insisting on a human,
+restore the exact interrupted stage question, including a pending identity
+question. Do not keep asking the offer-of-help question.
 
 Callback and transfer APIs are engine actions reached only after code validates
 the permitted time/date/enum and caller request. Do not invent success when these
 return a failed business result. Where inputs do not define recovery, list that
 specific limitation instead of presenting a fabricated policy as a rule.
+Declare each action guard in security.action_guards. Its action has a single
+guarded incoming edge from that code node. Bind ALL non-customer action fields
+to trusted code variables; the guard validates even literal queue choices before
+writing them. No pre-hook may change the request URL, method, customer binding,
+headers or body. Only the lifecycle close hook may replace outcome/reason.
 
 Prefer one workflow-level end_of_call close_call API tool. Bake safe literal
 outcome/reason defaults from the source for a hangup before any setup has run.
@@ -226,10 +294,47 @@ dunder attributes. Do not put `{{` or `}}` ANYWHERE inside code, even nested dic
 closing braces. Separate closing braces with whitespace or use temporary objects.
 All output variables read in later prompts must have defaults. Every passthrough
 code/API node needs a final always transition and a safe default transition.
-No conversation always/self route that shadows global exceptions. Use string
+No conversation self route. Use string
 states for routing, and grouped conditions with top-level logic:or. An AND is
 nested. Do not route to the same target with an always and a guarded condition;
 Freya merges them and makes the route unconditional.
+
+## Current-message contract
+
+Extraction is untrusted and persistent on Freya. All mutable speech inputs must
+be plain type:string, without validation_pattern or restrictive date/phone types.
+Use enums for event/correction with an empty-string member so code can reset them.
+Use min_confidence:0.0 and max_retries:1 for speech fields. Revalidate in code;
+confidence is not a safety gate. Each description requires ONLY the latest user
+message: never fill a missing amount/date/answer from earlier conversation.
+Absent fields must be empty strings. Include a speech-text field containing the
+latest utterance only. Unknown, invalid enum, rejected or absent extraction takes
+a safe repeat of the exact current question. In particular a name confirmation
+may include polite words, the full name or contractions, and cannot select a new
+security question. The dialogue task is only the fixed stage instruction/question
+chosen by code. No task_message gives permission to pick a question or a stage.
+
+Use plain strings for untrusted raw date/amount/identity text. A date string has
+an explicit extraction instruction using call {{now}} and input calendar rules;
+do not rely on the platform date anchor (the real clock). Keep vague phrases
+distinct from exact dates; code normalizes relative/numeric dates and validates
+them. Trusted canonical dates may also be strings, checked by portable code.
+Never clear a typed date with ''. Never set a missing speech field to a valid
+placeholder date. Copy the current speech inputs to local variables, then clear
+EVERY extracted field with literal vars assignments BEFORE processing this
+message, including all error branches and approval. No value from a consumed
+message may be reused for a new refusal, correction or agreement. Preserve a
+pending trusted offer separately; it is not fresh speech. Write a short
+decision_status with processed/fallback/error and a reason for trace diagnostics.
+Fallback can repeat the permitted question but cannot create approval or a bank
+verification. Initialize reset inputs and question state before re-entering a
+listening node. The initial fixed opening needs no initialized placeholders
+other than call inputs. String reset behavior must be checked in a live call;
+local dictionary checks alone do not prove platform acceptance.
+An empty/unknown opening extraction is an unclear party answer and uses the
+source's opening ask budget. Two unclear answers must not repeat forever when
+the source permits only two asks. Identity parse failures use a different budget
+and cannot count as bank-rejected answers.
 
 ## Executable local checks
 
@@ -262,6 +367,23 @@ they exercise logic you wrote. Use synthetic fixture values only in checks; neve
 in production prompts/test_variables. These are guard tests, not official score.
 If guards inspect raw speech, test clear positive sentences with extra polite
 words and punctuation, alongside the mixed approval/correction rejection.
+Also include regressions for a missing event after a consumed date followed by
+refusal, verification completed then a question then account loading, plan with
+correction amount, hardship with a voluntary offer, and unknown extraction at
+opening. security.validation_fixture supplies only independent synthetic INPUTS;
+the builder independently asserts chain invariants and does not trust generated
+expected outcomes. Provide every validation_state role, events and routes used
+by your code, including retry attempts/result (ok/failed/unknown). The recorded
+role is a string current-product marker empty/recorded. Fingerprints are strings.
+The correction role is a string yes/no/empty marker. The write-result role is
+empty/ok/failed/unknown; only failed may enter a bounded retry. Set the sourced
+positive integer security.write_attempt_limit (1 when no retry is allowed).
+The valid fixture must contain a complete bank-derived product and call now,
+not a bank authorization or pre-recorded success. Both offer and approval guard
+must read/write the mapped roles so mutated boundary inputs exercise real code.
+Include two unclear opening answers through the source limit, accepted help
+returning to the interrupted identity question, hardship voluntary offer then
+negative readback with no persuasion, and plan during verified account-resume.
 
 Keep the generated implementation small enough to inspect. Reuse identical
 snippets only where safe, group related decisions in code, and keep dialogue

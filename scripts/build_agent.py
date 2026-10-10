@@ -128,15 +128,6 @@ def parse_model_output(text):
     return json.loads(text)
 
 
-def version_numbers(value):
-    if isinstance(value, dict):
-        return ([value["agentVersionNumber"]] if value.get("agentVersionNumber") is not None else []) + [
-            version for child in value.values() for version in version_numbers(child)]
-    if isinstance(value, list):
-        return [version for child in value for version in version_numbers(child)]
-    return []
-
-
 def test_version_errors(simulations, version, reps):
     if not isinstance(simulations, list) or len(simulations) != reps:
         return [f"Expected version evidence for {reps} simulation(s)."]
@@ -184,7 +175,6 @@ def self_check():
     assert model == "test-model" and "PRIVATE" not in json.dumps(rows) and not errors
     assert parse_model_output('{"workflow":{"nodes":{}}}') == {"workflow": {"nodes": {}}}
     assert parse_model_output('```json\n{"workflow":{"nodes":{}}}\n```') == {"workflow": {"nodes": {}}}
-    assert version_numbers({"runs": [{"agentVersionNumber": 4}]}) == [4]
     verified = {"status": "completed", "reported_agent_versions": [4]}
     assert not test_version_errors([verified, verified, verified], 4, 3)
     assert test_version_errors([verified, verified, {"status": "completed", "reported_agent_versions": []}], 4, 3)
@@ -430,8 +420,6 @@ def main():
             results = json.loads((result_folder / "official-results.json").read_text())
             manifest["live_test"].update(simulation_id=results["simulation_id"], iteration_id=results["iteration_id"])
             tested_versions = set(summary.get("reported_agent_versions", []))
-            for call_path in (result_folder / "calls").glob("*.json"):
-                tested_versions.update(version_numbers(json.loads(call_path.read_text())))
             verification_errors = test_version_errors(summary.get("simulations"), version, args.reps)
             manifest["live_test"].update(reported_agent_versions=sorted(tested_versions),
                                          version_verification_errors=verification_errors,

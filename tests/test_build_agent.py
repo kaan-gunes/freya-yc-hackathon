@@ -17,6 +17,19 @@ import freya
 
 class BuildAgentChecks(unittest.TestCase):
     def test_dry_run_rejection_is_repaired_before_save(self):
+        self.run_mock_build()
+
+    def test_checked_version_survives_later_read_error_and_unrelated_raw_call(self):
+        manifest = self.run_mock_build(
+            simulation_extra={"read_errors": [{"source": "/api/v2/simulations/mock-simulation/iterations/mock-iteration",
+                                                 "error": "GET metadata -> 503: unavailable"}],
+                              "version_evidence": [{"source": "/api/v2/simulations/mock-simulation",
+                                                    "field": "agentVersionNumber", "version": 7}]},
+            raw_call={"id": "unrelated-call", "entityId": "other-agent", "agentVersionNumber": 99})
+        self.assertEqual(manifest["live_test"]["reported_agent_versions"], [7])
+        self.assertEqual(len(manifest["live_test"]["simulations"][0]["read_errors"]), 1)
+
+    def run_mock_build(self, *, simulation_extra=None, raw_call=None):
         with tempfile.TemporaryDirectory() as directory:
             kit = Path(directory).resolve() / "kit"
             (kit / "docs").mkdir(parents=True)
@@ -34,8 +47,11 @@ class BuildAgentChecks(unittest.TestCase):
             (results / "summary.json").write_text(json.dumps({
                 "status": "completed", "passed": 1, "total": 1,
                 "reported_agent_versions": [7],
-                "simulations": [{"status": "completed", "reported_agent_versions": [7]}],
+                "simulations": [{"status": "completed", "reported_agent_versions": [7],
+                                 **(simulation_extra or {})}],
             }))
+            if raw_call is not None:
+                (results / "calls" / "unrelated.json").write_text(json.dumps(raw_call))
             (results / "official-results.json").write_text(json.dumps({
                 "simulation_id": "mock-simulation", "iteration_id": "mock-iteration",
             }))
@@ -98,6 +114,7 @@ class BuildAgentChecks(unittest.TestCase):
             self.assertTrue(json.loads((folder / "readback.json").read_text())["ok"])
             self.assertTrue((folder / "export.workflow.json").exists())
             self.assertFalse(json.loads((folder / "freya-validation-attempt-1.json").read_text())["ok"])
+            return manifest
 
 
 if __name__ == "__main__":
