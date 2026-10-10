@@ -137,7 +137,9 @@ the trusted bank flag to "verified" only from successful complete bank verificat
 Strings "false" and "False" are false, never use their Python truthiness.
 Add a concise what_to_do_next to the result and remove header fields.
 Completing bank verification must also change stage to account-pending and clear
-the completed identity question. The next route loads the account exactly once.
+the completed identity question. A successful tool result is not a new customer
+reply: with cleared speech fields, load the account exactly once, without asking
+for another yes or charging an unclear-answer counter.
 At the start of decision code, reconcile verified + identity/account-pending
 before handling an ordinary question. It must never fall into payment logic with
 no bank products. Human/other source-priority interrupts remain possible. A
@@ -182,6 +184,9 @@ current yes, no correction, a still-valid offer/readback fingerprint, and no sav
 promise for that product. Corrections clear confirmation and pass through the
 offer guard before a fresh readback. "Yes, but change the date" is a correction.
 Questions are not approvals. Same amount/date corrections still need rereading.
+An ordinary question about interest changing is not a payment correction. Use
+the current question event before broad words such as "change", unless the
+customer explicitly changes the proposed amount/date.
 Handle current human/plan/dispute and other source-priority exceptions BEFORE
 ordinary amount/date correction. Carry their amount/date parameters to the
 decision code; do not erase the event when correction is present. Hardship with a
@@ -238,6 +243,8 @@ clear, or handle fresh exceptions in local deterministic routes before the gate.
 Do not depend on semantic global interrupts to beat a matching deterministic gate.
 Use source priority for hardship vs persuasion/plan request; voluntary offers
 remain possible where allowed. Counter thresholds and API enums are from inputs.
+Required sympathy must be spoken on the actual listening/readback path, including
+a voluntary offer that goes straight through silent code to confirmation TTS.
 Keep hardship context until that negotiation is resolved. A voluntary offer does
 not erase the no-persuasion requirement. If the customer then rejects its
 readback, follow the hardship support/decline path without a persuasion offer.
@@ -383,7 +390,10 @@ not a bank authorization or pre-recorded success. Both offer and approval guard
 must read/write the mapped roles so mutated boundary inputs exercise real code.
 Include two unclear opening answers through the source limit, accepted help
 returning to the interrupted identity question, hardship voluntary offer then
-negative readback with no persuasion, and plan during verified account-resume.
+negative readback with no persuasion, plan during verified account-resume, and
+complete bank verification with cleared speech loading account without another
+customer reply. Test a question about interest changing separately from a real
+amount/date correction. Ensure required hardship sympathy reaches emitted TTS.
 
 Keep the generated implementation small enough to inspect. Reuse identical
 snippets only where safe, group related decisions in code, and keep dialogue

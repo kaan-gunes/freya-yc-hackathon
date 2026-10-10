@@ -19,6 +19,9 @@ class BuildAgentChecks(unittest.TestCase):
     def test_dry_run_rejection_is_repaired_before_save(self):
         self.run_mock_build()
 
+    def test_two_dry_run_rejections_are_repaired_on_third_attempt_with_the_same_deadline(self):
+        self.run_mock_build(dry_run_rejections=2)
+
     def test_checked_version_survives_later_read_error_and_unrelated_raw_call(self):
         manifest = self.run_mock_build(
             simulation_extra={"read_errors": [{"source": "/api/v2/simulations/mock-simulation/iterations/mock-iteration",
@@ -29,7 +32,7 @@ class BuildAgentChecks(unittest.TestCase):
         self.assertEqual(manifest["live_test"]["reported_agent_versions"], [7])
         self.assertEqual(len(manifest["live_test"]["simulations"][0]["read_errors"]), 1)
 
-    def run_mock_build(self, *, simulation_extra=None, raw_call=None):
+    def run_mock_build(self, *, simulation_extra=None, raw_call=None, dry_run_rejections=1):
         with tempfile.TemporaryDirectory() as directory:
             kit = Path(directory).resolve() / "kit"
             (kit / "docs").mkdir(parents=True)
@@ -55,9 +58,10 @@ class BuildAgentChecks(unittest.TestCase):
             (results / "official-results.json").write_text(json.dumps({
                 "simulation_id": "mock-simulation", "iteration_id": "mock-iteration",
             }))
-            prompts = []
+            prompts, deadlines = [], []
 
             def invoke(command, deadline, **kwargs):
+                deadlines.append(deadline)
                 if command[:2] == ["git", "rev-parse"]:
                     return 0, "synthetic-commit\n", ""
                 if command[:2] == ["git", "status"]:
@@ -73,7 +77,7 @@ class BuildAgentChecks(unittest.TestCase):
                 return 0, "Output: " + str(results) + "\n", ""
 
             def save(*args, **kwargs):
-                self.assertEqual(dry_run.call_count, 2, "save occurred before a passing dry-run")
+                self.assertEqual(dry_run.call_count, dry_run_rejections + 1, "save occurred before a passing dry-run")
                 return {"agent_id": "mock-agent", "workflow_id": "mock-workflow", "version": 7}
 
             def api(method, path, **kwargs):
@@ -91,7 +95,7 @@ class BuildAgentChecks(unittest.TestCase):
             error = "POST /api/v2/workflow -> 400: Missing workflow.tools.0.function.description"
             with patch.object(runner, "KIT", kit), patch.object(runner, "invoke", invoke), \
                     patch("builder.validation.validate", side_effect=lambda *args: copy.deepcopy(local)), \
-                    patch("freya.validate_workflow", side_effect=[RuntimeError(error), {"ok": True}]) as dry_run, \
+                    patch("freya.validate_workflow", side_effect=[RuntimeError(error)] * dry_run_rejections + [{"ok": True}]) as dry_run, \
                     patch("freya.save_workflow", side_effect=save) as save_workflow, \
                     patch("freya.workspace_id", return_value="mock-workspace"), \
                     patch("freya.api", side_effect=api), patch("freya.export_workflow", side_effect=export), \
@@ -104,16 +108,27 @@ class BuildAgentChecks(unittest.TestCase):
             folder = next((kit / "out").iterdir())
             manifest = json.loads((folder / "manifest.json").read_text())
             self.assertEqual(manifest["status"], "completed")
-            self.assertEqual([attempt["valid"] for attempt in manifest["generation_attempts"]], [False, True])
-            self.assertEqual(len(prompts), 2)
-            self.assertIn(prompts[0], prompts[1])
-            self.assertIn(error, prompts[1])
-            self.assertNotIn("fak_synthetic_not_live", prompts[1])
-            self.assertNotIn("synthetic_bank_team_key", prompts[1])
+            self.assertEqual([attempt["valid"] for attempt in manifest["generation_attempts"]], [False] * dry_run_rejections + [True])
+            self.assertEqual(len(prompts), dry_run_rejections + 1)
+            self.assertEqual(len(set(deadlines)), 1, "repair must not extend the fixed builder deadline")
+            for prompt in prompts[1:]:
+                self.assertIn(prompts[0], prompt)
+                self.assertIn(error, prompt)
+                self.assertNotIn("fak_synthetic_not_live", prompt)
+                self.assertNotIn("synthetic_bank_team_key", prompt)
             self.assertTrue(manifest["live_test"]["tested_version_verified"])
             self.assertTrue(json.loads((folder / "readback.json").read_text())["ok"])
             self.assertTrue((folder / "export.workflow.json").exists())
-            self.assertFalse(json.loads((folder / "freya-validation-attempt-1.json").read_text())["ok"])
+            for attempt in range(1, dry_run_rejections + 2):
+                for artifact in ("raw", "policy", "workflow", "checks", "validation", "freya-validation"):
+                    self.assertTrue((folder / f"{artifact}-attempt-{attempt}.json").exists())
+                self.assertEqual(json.loads((folder / f"freya-validation-attempt-{attempt}.json").read_text())["ok"],
+                                 attempt == dry_run_rejections + 1)
+            trace = [json.loads(line) for line in (folder / "trace.jsonl").read_text().splitlines()]
+            for event in ("model_begin", "model_end", "local_validation", "freya_validation"):
+                self.assertEqual([row["attempt"] for row in trace if row["event"] == event], list(range(1, dry_run_rejections + 2)))
+            self.assertEqual([row["attempt"] for row in json.loads((folder / "model-events.json").read_text())],
+                             list(range(1, dry_run_rejections + 2)))
             return manifest
 
 

@@ -640,6 +640,19 @@ def _independent_checks(nodes, snippets, security, checks):
             raise ValueError("verified identity plus question did not resume account loading")
         assert_denied(state)
     run("independent_verified_identity_question_return", identity_return)
+
+    def identity_complete():
+        state = copy.deepcopy(identity)
+        bank_var = security.get("bank_verification_variable")
+        state[bank_var] = "verified"
+        for node in nodes.values():
+            for field in node.get("extraction_schema", []):
+                state[field["name"]] = ""
+        state, target = advance(security.get("decision_node"), state)
+        if target not in security.get("account_nodes", []) or state.get(roles["stage"]) == "identity" or state.get(bank_var) != "verified":
+            raise ValueError("completed verified identity must load account without a fresh caller reply")
+        assert_denied(state)
+    run("independent_verified_identity_completion", identity_complete)
     for operation, action_gate in security.get("action_guards", {}).items():
         def empty_action(action_gate=action_gate):
             state = step(action_gate["node"], {})
@@ -970,6 +983,11 @@ def _validate(workflow, policy, openapi, checks):
     for required in REQUIRED_CHECKS:
         if not any(name == required or name.startswith(required + "_") for name in names):
             fail(f"missing generated check: {required}")
+    canonical_offers = {category for category in ("invalid_amount", "invalid_date") if any(
+        isinstance(check, dict) and check.get("node_id") == security.get("offer_guard_node") and
+        (check.get("name") == category or check.get("name", "").startswith(category + "_"))
+        for check in checks
+    )}
     for check in checks:
         identifier = check.get("node_id") if isinstance(check, dict) else ""
         report = {"name": check.get("name", "") if isinstance(check, dict) else "", "node_id": identifier, "ok": False}
@@ -987,7 +1005,7 @@ def _validate(workflow, policy, openapi, checks):
                     raise ValueError("identity_unverified must target a verification post-hook")
                 if bank_var not in check["expected"] or check["expected"][bank_var] == "verified":
                     raise ValueError(f"identity_unverified must assert {bank_var} != 'verified'")
-            if category in ("invalid_amount", "invalid_date") and identifier != security.get("offer_guard_node"):
+            if category in ("invalid_amount", "invalid_date") and identifier != security.get("offer_guard_node") and (category not in canonical_offers or identifier != security.get("decision_node")):
                 raise ValueError(f"{category} must target the offer guard")
             if category in ("correction_clears_confirmation", "negative_confirmation", "duplicate_promise_blocked"):
                 if identifier != security.get("approval_guard_node"):

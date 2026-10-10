@@ -430,6 +430,36 @@ class ValidationTests(unittest.TestCase):
         for text in ("confirmation fixture may provide fresh speech only", "correction fixture must provide fresh speech inputs", "actual guard reads/writes"):
             self.assertTrue(any(text in error for error in report["errors"]), report)
 
+    def test_additional_invalid_input_checks_do_not_replace_offer_guard_checks(self):
+        for category in ("invalid_amount", "invalid_date"):
+            with self.subTest(category=category):
+                arguments = candidate()
+                extra = {"name": category + "_handled_in_decision", "node_id": "decision", "vars": {"bank_status": "verified", "speech_event": "no"}, "expected": {"record_authorization": ""}}
+                arguments[3].append(extra)
+                self.assertTrue(validate(*arguments)["ok"])
+                extra["expected"]["record_authorization"] = "authorized"
+                self.assert_rejected(arguments, "expected 'authorized'")
+                extra["expected"]["record_authorization"] = ""
+                extra["node_id"] = "verify:verify_identity:post"
+                extra["expected"] = {"bank_status": "unverified"}
+                self.assert_rejected(arguments, "must target the offer guard")
+                extra["node_id"] = "decision"
+                extra["expected"] = {"record_authorization": ""}
+                canonical = next(check for check in arguments[3] if check["name"] == category)
+                canonical["node_id"] = "decision"
+                self.assert_rejected(arguments, "must target the offer guard")
+                canonical["node_id"] = "offer"
+                arguments[3][:] = [check for check in arguments[3] if check["name"] != category]
+                self.assert_rejected(arguments, "must target the offer guard")
+
+    def test_completed_identity_does_not_wait_for_a_new_customer_reply(self):
+        arguments = candidate()
+        self.assertTrue(validate(*arguments)["ok"])
+        code = arguments[0]["nodes"]["decision"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]
+        code["default"] += "if vars.get('bank_status') == 'verified' and not event:\n    vars['route'] = 'listen'\n"
+        arguments[0]["nodes"]["decision"]["transitions"][0]["condition"] = {"logic": "or", "conditions": [{"logic": "and", "conditions": [guard("bank_status", "verified")["conditions"][0], guard("route", "account")["conditions"][0]]}]}
+        self.assert_rejected(arguments, "without a fresh caller reply")
+
 
 if __name__ == "__main__":
     unittest.main()

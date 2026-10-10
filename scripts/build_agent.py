@@ -275,7 +275,7 @@ def main():
         from builder.validation import validate
         model_prompt, all_events = prompt, []
         manifest["generation_attempts"] = []
-        for attempt in (1, 2):
+        for attempt in (1, 2, 3):
             purpose = ("Extract sourced policy and generate the portable workflow and local checks." if attempt == 1
                        else "Repair the generated candidate using validation errors and the same complete source inputs.")
             event("model_begin", attempt=attempt, model=args.model or "Codex CLI default", purpose=purpose)
