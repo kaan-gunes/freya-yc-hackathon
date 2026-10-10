@@ -16,6 +16,7 @@ Banka talimatları + OpenAPI → Builder → Freya'da telefon agentı → Test �
 4. [İlk test sonucu](research/ilk-test-sonucu.md): altyapı çalıştı; hazır agent PUB-01'i SMS cümlesi eksikliği nedeniyle geçemedi.
 5. [Test akışı](research/test-akisi.md): test komutları ve hata bildirim biçimi.
 6. [İlk geliştirme promptu](DEVELOPMENT_PROMPT.md): kodlama agentına verilecek mimari, geliştirme sırası ve ilk sürüm beklentileri.
+7. [İlk builder incelemesi](research/builder-review-9046149.md) ve [ikinci geliştirme promptu](NEXT_DEVELOPMENT_PROMPT.md): canlı konuşma bulguları, doğrulama açıkları ve sıradaki düzeltmeler.
 
 ## Klasörler
 
