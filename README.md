@@ -19,6 +19,7 @@ Banka talimatları + OpenAPI → Builder → Freya'da telefon agentı → Test �
 5. [Test akışı](research/test-akisi.md): test komutları ve hata bildirim biçimi.
 6. [İlk geliştirme promptu](DEVELOPMENT_PROMPT.md): kodlama agentına verilecek mimari, geliştirme sırası ve ilk sürüm beklentileri.
 7. [İlk builder incelemesi](research/builder-review-9046149.md) ve [ikinci geliştirme promptu](NEXT_DEVELOPMENT_PROMPT.md): canlı konuşma bulguları, doğrulama açıkları ve sıradaki düzeltmeler.
+8. [Mevcut işten sonraki prompt](AFTER_CURRENT_TASK_PROMPT.md): önce son sonucu kontrol ederek A kapsamı, A+B çoklu ürün ve küçük genelleme kontrollerine ilerler.
 
 ## Klasörler
 
