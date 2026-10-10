@@ -440,6 +440,28 @@ def _independent_checks(nodes, snippets, security, checks):
     answer_request_field = security.get("identity_answer_request_field")
     if not isinstance(answer_request_field, str) or not answer_request_field or answer_request_field == security.get("customer_id_field") or not any(answer_request_field in tool.get("function", {}).get("parameters", {}).get("properties", {}).get("body", {}).get("properties", {}) for _, tool in verification_requests):
         contract_errors.append("identity_answer_request_field must name an actual verification request property")
+    identity_request_context = security.get("validation_identity_request_context")
+    if not isinstance(identity_request_context, dict) or not identity_request_context:
+        contract_errors.append("validation_identity_request_context must declare the pending question's request properties")
+    elif any(not isinstance(name, str) or not name or name in (security.get("customer_id_field"), answer_request_field) or not isinstance(value, (str, int, float, bool)) or isinstance(value, str) and "{{" in value for name, value in identity_request_context.items()):
+        contract_errors.append("validation_identity_request_context needs literal values and cannot include customer or answer fields")
+    else:
+        def context_schema_matches(tool):
+            properties = tool.get("function", {}).get("parameters", {}).get("properties", {}).get("body", {}).get("properties", {})
+            if answer_request_field not in properties or not set(identity_request_context) <= set(properties):
+                return False
+            for name, value in identity_request_context.items():
+                field = properties[name]
+                expected_type = {"string": str, "number": (int, float), "integer": int, "boolean": bool}.get(field.get("type"))
+                if not expected_type or not isinstance(value, expected_type):
+                    return False
+                if field.get("type") in ("number", "integer") and (isinstance(value, bool) or not -float("inf") < value < float("inf")):
+                    return False
+                if "enum" in field and not any(_json_equal(value, operand) for operand in field["enum"]):
+                    return False
+            return True
+        if not any(context_schema_matches(tool) for _, tool in verification_requests):
+            contract_errors.append("validation_identity_request_context must match real verification request property types and enums")
     offer, approval = security.get("offer_guard_node"), security.get("approval_guard_node")
     record_nodes = security.get("record_nodes", [])
     readbacks = security.get("confirmation_nodes", [])
@@ -720,8 +742,11 @@ def _independent_checks(nodes, snippets, security, checks):
         if nodes[target].get("node_type") != "api_request" or target not in {identifier for identifier, _ in verification_requests}:
             raise ValueError("complete spoken identity date did not reach a verification API action")
         requests = bound_request(target, state)
-        if not any(name in security.get("verification_tools", ["verify_identity"]) and body.get(answer_request_field) == canonical_identity_answer for name, body in requests):
+        canonical_requests = [body for name, body in requests if name in security.get("verification_tools", ["verify_identity"]) and body.get(answer_request_field) == canonical_identity_answer]
+        if not canonical_requests:
             raise ValueError("spoken identity date was not bound as the canonical ISO verification answer")
+        if not any(all(name in body and _json_equal(body[name], value) for name, value in identity_request_context.items()) for body in canonical_requests):
+            raise ValueError("spoken identity date request did not match the declared pending-question context")
     day = datetime.date.fromisoformat(canonical_identity_answer)
     month = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December")[day.month - 1]
     suffix = "th" if 11 <= day.day % 100 <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(day.day % 10, "th")

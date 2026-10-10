@@ -8,7 +8,8 @@ Dates in this report use Europe/Istanbul. Artifact names use UTC.
 
 Code commits: `9b4764c` (`fix: keep phone decisions current and preserve test evidence`)
 and `030cd23` (`fix: cover normal verification and bounded generator repairs`).
-All 54 repository tests pass, and the builder self-check passes.
+Follow-up commit `881bd1c` validates spoken identity dates and uses sparse repairs.
+All 56 repository tests pass, and the builder self-check passes.
 Follow-up checks add normal identity completion, supplementary decision tests
 that cannot replace required guard tests, and three attempts within one deadline.
 
@@ -34,6 +35,10 @@ checks send month-name, ordinal, comma and case variants through the actual
 decision and verification request. The resolved answer must be the same valid
 ISO date; account and record actions remain denied. The unit fixture has 29
 independent checks; the total depends on the candidate's secondary actions.
+A follow-up also checks the resolved request's sourced pending-question context,
+so a canonical date cannot be sent under a different security question. Its
+regression covers renamed API fields and operands. This change was made after
+the next run started; that run uses the validator snapshot from `881bd1c`.
 
 The test helper saves session, simulation, iteration and call IDs early. It
 keeps execution, result reading and scoring separate, accumulates owned version
@@ -67,7 +72,7 @@ The follow-up keeps a mandatory offer-guard check and permits extra decision
 checks without replacing it. A new independent normal-completion check also
 catches an extra consent step when verified bank truth has stale local identity
 state and cleared speech. Generation rules now cover that path explicitly.
-No new version or score is claimed yet.
+That run produced no new version or score.
 
 The earlier development run `20261010T212235494756Z` stopped at local validation
 after 763.28 seconds. It exposed fixture-role and closing-hook contract issues.
@@ -126,5 +131,7 @@ published version, then all ten Brief A cases and correction/split-answer styles
 Generated workflow files have not been edited by hand.
 
 Open scope: A+B and multiple products, a separate LLM controller, and aggressive
-history trimming. The current example bank key is used for this development
+history trimming. The date fixture currently assumes a sourced date security
+question, as Brief A requires. Briefs with no date question need a source-backed
+conditional check before claiming support. The current example bank key is used for this development
 test with the user's approval; a shared private key is still needed for team use.

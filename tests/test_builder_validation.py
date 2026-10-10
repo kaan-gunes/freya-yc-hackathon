@@ -136,7 +136,7 @@ elif not vars.get('recorded') and vars.get('offer_fingerprint') and vars.get('of
         "identity_nodes": ["identity"], "trusted_variables": ["bank_status", "record_authorization", "recorded", "validated_product", "validated_amount", "validated_date", "offer_fingerprint", "readback_fingerprint", "exception", "route", "stage", "write_attempts", "write_result", "persuasion_attempts", "party_confirmation", "verification_answer", "transfer_authorization", "transfer_queue"],
         "bank_verification_variable": "bank_status", "bank_gate": {"node": "decision", "variable": "bank_status", "operand": "verified", "target": "account"},
         "account_nodes": ["account"], "offer_guard_node": "offer", "approval_guard_node": "approval", "confirmation_nodes": ["confirmation"], "record_nodes": ["record"], "close_nodes": ["end"],
-        "decision_node": "decision", "write_attempt_limit": 2, "party_confirmation_operand": "confirmed", "identity_answer_request_field": "answer",
+        "decision_node": "decision", "write_attempt_limit": 2, "party_confirmation_operand": "confirmed", "identity_answer_request_field": "answer", "validation_identity_request_context": {"field": "date_of_birth"},
         "validation_state": {"proposed_amount": "amount", "proposed_date": "date", "approval_event": "approval", "correction": "correction", "decision_event": "speech_event", "identity_answer": "speech_answer", "persuasion_attempts": "persuasion_attempts", "party_confirmation": "party_confirmation", "recorded": "recorded", "offer_fingerprint": "offer_fingerprint", "readback_fingerprint": "readback_fingerprint", "exception": "exception", "route": "route", "stage": "stage", "write_attempts": "write_attempts", "write_result": "write_result"},
         "validation_events": {name: name for name in ("yes", "no", "question", "human", "plan", "hardship", "dispute", "third_party")},
         "validation_routes": {name: name for name in ("account", "confirmation", "record", "offer", "transfer", "end")},
@@ -593,6 +593,41 @@ class ValidationTests(unittest.TestCase):
         arguments = candidate()
         arguments[1]["security"]["validation_third_party_fixture"] = {"stage": "identity", "speech_event": "third_party"}
         self.assert_rejected(arguments, "nonempty actual speech field besides decision_event")
+
+    def test_spoken_identity_date_requires_the_declared_request_question(self):
+        arguments = candidate()
+        body = arguments[0]["nodes"]["verify"]["pre_actions"][0]["function"]["parameters"]["properties"]["body"]
+        body["properties"]["field"]["default"] = "phone_last4"
+        report = validate(*arguments)
+        self.assertTrue(all(check["ok"] for check in report["checks"] if not check["name"].startswith("independent_")), report)
+        self.assert_rejected(arguments, "did not match the declared pending-question context")
+        for context, reason in (
+            ({}, "must declare the pending question"),
+            ({"not_a_request_field": "date_of_birth"}, "real verification request property types and enums"),
+            ({"field": "unknown_question"}, "real verification request property types and enums"),
+            ({"field": False}, "real verification request property types and enums"),
+            ({"customer_id": "c-fixture"}, "cannot include customer or answer fields"),
+            ({"answer": "1990-04-12"}, "cannot include customer or answer fields"),
+            ({"field": "{{question}}"}, "needs literal values"),
+        ):
+            with self.subTest(context=context):
+                arguments = candidate()
+                arguments[1]["security"]["validation_identity_request_context"] = context
+                self.assert_rejected(arguments, reason)
+
+    def test_identity_request_context_uses_supplied_property_and_operand_names(self):
+        arguments = candidate()
+        schema = arguments[2]["paths"]["/verify_identity"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+        schema["properties"]["question_kind"] = schema["properties"].pop("field")
+        schema["properties"]["question_kind"]["enum"] = ["birthdate", "phone_last4"]
+        schema["required"] = ["question_kind" if name == "field" else name for name in schema["required"]]
+        body = arguments[0]["nodes"]["verify"]["pre_actions"][0]["function"]["parameters"]["properties"]["body"]
+        body["properties"]["question_kind"] = body["properties"].pop("field")
+        body["properties"]["question_kind"].update(enum=["birthdate", "phone_last4"], default="birthdate")
+        body["required"] = ["question_kind" if name == "field" else name for name in body["required"]]
+        arguments[1]["security"]["validation_identity_request_context"] = {"question_kind": "birthdate"}
+        report = validate(*arguments)
+        self.assertTrue(report["ok"], report)
 
 
 if __name__ == "__main__":

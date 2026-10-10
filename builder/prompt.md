@@ -90,6 +90,8 @@ validation_identity_answer_fixture: {complete pre-verification identity state,
                                     prior party confirmation and a canonical
                                     synthetic YYYY-MM-DD raw identity answer}
 identity_answer_request_field: actual verification API answer property
+validation_identity_request_context: {actual verification question property:
+                                     source-derived date-question operand}
 validation_third_party_fixture: {complete pre-verification identity state with
                                 prior party confirmation and a fresh relative
                                 admission containing a complete identity answer
@@ -422,7 +424,10 @@ other roles and read and cleared by decision code. Supply a complete identity
 answer fixture with its real pending question/stage and a synthetic canonical
 ISO birth date. Declare the actual verification request answer field. The builder
 will replace that raw date with month-name variants and require the real verify
-action's resolved request answer to equal the same canonical ISO date. Add a
+action's resolved request answer to equal the same canonical ISO date. Supply
+the request context for this pending date question using the input's real API
+property and operand; the date must not be sent to a different security question.
+Add a
 generated regression for this path as well as split identity answers.
 Empty/rejected extraction is not a caller refusal or deliberate non-answer:
 repeat the current stage question without a new offer or persuasion use. Use a
