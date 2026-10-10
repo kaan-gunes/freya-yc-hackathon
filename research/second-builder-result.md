@@ -1,7 +1,7 @@
 # Second builder result - 2026-10-11
 
-Status: version 2 passed publication checks but failed PUB-01. Follow-up compiler
-changes pass local checks; a new generation and live gate are next.
+Status: versions 2 and 3 failed PUB-01 for different identity-input bugs.
+Follow-up compiler fixes and checks are in progress; no stable live pass is claimed.
 Dates in this report use Europe/Istanbul. Artifact names use UTC.
 
 ## Code and checks
@@ -9,7 +9,8 @@ Dates in this report use Europe/Istanbul. Artifact names use UTC.
 Code commits: `9b4764c` (`fix: keep phone decisions current and preserve test evidence`)
 and `030cd23` (`fix: cover normal verification and bounded generator repairs`).
 Follow-up commit `881bd1c` validates spoken identity dates and uses sparse repairs.
-All 56 repository tests pass, and the builder self-check passes.
+Commit `6482ae1` adds the pending-question request-context regression.
+All 58 repository tests pass, and the builder self-check passes.
 Follow-up checks add normal identity completion, supplementary decision tests
 that cannot replace required guard tests, and three attempts within one deadline.
 
@@ -33,7 +34,7 @@ Follow-up checks reject silent extraction consuming persuasion, and a relative's
 identity answer after earlier first-party confirmation. Six new spoken-date
 checks send month-name, ordinal, comma and case variants through the actual
 decision and verification request. The resolved answer must be the same valid
-ISO date; account and record actions remain denied. The unit fixture has 29
+ISO date; account and record actions remain denied. The unit fixture has 31
 independent checks; the total depends on the candidate's secondary actions.
 A follow-up also checks the resolved request's sourced pending-question context,
 so a canonical date cannot be sent under a different security question. Its
@@ -93,11 +94,35 @@ run and its 30-minute budget ended before results arrived. A separate read-only
 resume recovered the official score without starting another simulation. That
 recovery does not make the original build complete within its deadline.
 
+Run `20261010T224719208056Z` started from clean commit `881bd1c`. Its first
+candidate passed 75 local checks (30 independent), Freya dry-run, publication of
+version 3, readback and export. PUB-01 finished 0/1 in
+`build-the-builder/results/20261010T225426517285Z-404df3cd`, simulation
+`30c95712-c3ea-4a06-b9d6-330386d64d2d`, iteration
+`d85bb021-a614-4dd5-ae33-2f8dd79c2a48`, call
+`031fbd17-8345-4cba-b2e2-eda6cfef30d4`. All result reads and scoring completed.
+The request-context check in `6482ae1` was added after this run started. Its
+generated runtime was separately replayed in memory: the word birth date reaches
+the date question with ISO formatting, and phone last-four reaches its own
+question without date conversion. Those local fixtures put the answer in the
+identity field. The live extractor instead put all 79 DOB replies in the general
+date field, with the identity field empty. Decision code ignored that fresh date
+and repeated the question. Replaying the actual first pre-decision state exactly
+reproduced the failure; moving only its fresh date into the identity input reached
+the correct verification request. No verification or promise API ran live.
+The helper recorded 157 fallback-state route events (including listener routes
+that still held the last decision status); replay found 79 failed decisions.
+The next fix accepts that current date inside the guarded pending-date identity
+path and tests the exact alternate-field shape, not only the normal fixture.
+Its paired negative blanks all current speech and seeds the old canonical answer:
+the real decision must still return to a listener without a verification action.
+
 | Run | Result | Time | Published / live test |
 | --- | --- | --- | --- |
 | `20261010T212235494756Z` | Local validation stopped | 763.28 s | Neither |
 | `20261010T214447691384Z` | Local validation stopped | 870.75 s | Neither |
 | `20261010T220403404639Z` | Budget ended during test | 1800.01 s | Version 2; recovered PUB-01 0/1 |
+| `20261010T224719208056Z` | Completed; gate failed | 664.02 s | Version 3; PUB-01 0/1 |
 
 ## Live Evidence
 
@@ -125,7 +150,7 @@ not reached, so that part still needs live evidence. A wrapper path fix allows
 the documented repository-relative resume command; its regression covers resume
 and custom case paths.
 
-Version 2 failed the first gate, so no three-repeat or full Brief A claim is made.
+Versions 2 and 3 failed the first gate, so no three-repeat or full Brief A claim is made.
 The next version must pass PUB-01 once, then three repetitions on the same
 published version, then all ten Brief A cases and correction/split-answer styles.
 Generated workflow files have not been edited by hand.
@@ -133,5 +158,6 @@ Generated workflow files have not been edited by hand.
 Open scope: A+B and multiple products, a separate LLM controller, and aggressive
 history trimming. The date fixture currently assumes a sourced date security
 question, as Brief A requires. Briefs with no date question need a source-backed
-conditional check before claiming support. The current example bank key is used for this development
-test with the user's approval; a shared private key is still needed for team use.
+conditional check before claiming support. The current example bank key is used
+for this development test with the user's approval; a shared private key is still
+needed for team use.

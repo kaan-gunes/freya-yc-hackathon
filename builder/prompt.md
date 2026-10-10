@@ -69,7 +69,8 @@ decision_node: code node processing each ordinary caller reply
 validation_state: {proposed_amount, proposed_date, approval_event, correction,
                    recorded, offer_fingerprint, readback_fingerprint, exception,
                    route, stage, write_attempts, write_result, decision_event,
-                   persuasion_attempts, party_confirmation, identity_answer}
+                   persuasion_attempts, party_confirmation, identity_answer,
+                   decision_date}
   # Values are actual vars keys, not example values.
 validation_events: {yes, no, question, human, plan, hardship, dispute, third_party}
   # Values are actual extraction enum operands.
@@ -145,6 +146,13 @@ Bind customer_id from the call variable using default and question/answer from
 code state constrained by OpenAPI. Partial answers and parsing failures are not
 bank rejections. Use the exact bank hint and rejection budget. Use the API
 response's attempt count; do not charge local parsing failures.
+For a pending date security question, use the current raw identity answer or the
+current main date input when extraction put the date there instead. Copy and
+clear both before parsing. This fallback is only inside the confirmed-party,
+unverified identity path, after current exceptions/questions; it cannot change
+the selected question, count as approval, or reuse an earlier consumed date.
+Describe the main date field as payment/callback only and explicitly exclude
+identity dates, but do not depend on this description to make the path work.
 
 The verify_identity post-hook must reset its status on EACH result, handle
 transport failure separately, inspect the current `result['data']` body, and set
@@ -427,8 +435,13 @@ will replace that raw date with month-name variants and require the real verify
 action's resolved request answer to equal the same canonical ISO date. Supply
 the request context for this pending date question using the input's real API
 property and operand; the date must not be sent to a different security question.
-Add a
-generated regression for this path as well as split identity answers.
+Add a generated regression for this path as well as split identity answers.
+Map decision_date to the actual untrusted main extracted date field read and
+cleared by decision code. The independent fallback check clears the identity
+answer and other speech, supplies the current word date only in decision_date,
+and requires the same real verification request, without another question.
+With all fresh identity speech empty, a cached canonical answer must not trigger
+verification. Complete bank verification with empty speech still loads account.
 Empty/rejected extraction is not a caller refusal or deliberate non-answer:
 repeat the current stage question without a new offer or persuasion use. Use a
 distinct event for a genuine non-answer where the brief calls for persuasion.
