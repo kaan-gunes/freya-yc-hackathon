@@ -86,6 +86,9 @@ bash scripts/test-agent.sh 404df3cd-803d-4656-89ac-ac122f9d31d2 --only PUB-01
   do not prove a full conversation is correct.
 - The local lock covers this computer. Another computer or the dashboard can
   still change the shared workspace. Do not update the agent during a test.
+- The bank team key in the local environment matches the public example value.
+  Agree on a private shared value before later team tests. The Freya API key
+  does not appear in tracked files.
 
 The manifest keeps the generator's uncertainty notes. Later checks and publication
 records supersede its early note that the corrected candidate had not yet been
