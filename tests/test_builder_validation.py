@@ -42,7 +42,42 @@ def code_node(name, code, transitions):
 
 def candidate():
     identity = "data = result.get('data', {})\nvars['bank_status'] = 'verified' if data.get('ok') is True and data.get('all_verified') is True else 'unverified'\nif vars['bank_status'] == 'verified':\n    vars['stage'] = 'account_pending'\n"
-    decision = "event = vars.get('speech_event', '')\nvars['speech_event'] = ''\nvars['record_authorization'] = ''\nvars['route'] = 'verify'\nif vars.get('bank_status') == 'verified':\n    vars['stage'] = 'account_pending'\n    vars['route'] = 'account'\n"
+    decision = r"""import datetime
+import re
+event = vars.get('speech_event', '')
+answer = vars.get('speech_answer', '')
+party = vars.get('party_confirmation', '')
+vars['speech_event'] = ''
+vars['speech_answer'] = ''
+vars['record_authorization'] = ''
+vars['persuasion_attempts'] = int(vars.get('persuasion_attempts', 0))
+vars['route'] = 'listen'
+if event == 'third_party':
+    vars['party_confirmation'] = ''
+elif vars.get('bank_status') == 'verified' and vars.get('stage') in ('identity', 'account_resume', 'account_pending'):
+    vars['stage'] = 'account_pending'
+    vars['route'] = 'account'
+elif vars.get('bank_status') == 'verified' and event == 'no':
+    vars['persuasion_attempts'] += 1
+    vars['route'] = 'offer'
+elif event == 'yes' and party != 'confirmed':
+    vars['party_confirmation'] = 'confirmed'
+elif party == 'confirmed' and answer:
+    try:
+        try:
+            day = datetime.date.fromisoformat(answer)
+        except ValueError:
+            words = re.sub(r'(\d)(st|nd|rd|th)\b', r'\1', answer.lower()).replace(',', '').split()
+            months = 'january february march april may june july august september october november december'.split()
+            if words[0].isdigit():
+                day = datetime.date(int(words[2]), months.index(words[1]) + 1, int(words[0]))
+            else:
+                day = datetime.date(int(words[2]), months.index(words[0]) + 1, int(words[1]))
+        vars['verification_answer'] = day.isoformat()
+        vars['route'] = 'verify'
+    except (ValueError, IndexError):
+        pass
+"""
     offer = """import datetime
 vars['record_authorization'] = ''
 vars['offer_fingerprint'] = ''
@@ -83,9 +118,9 @@ elif not vars.get('recorded') and vars.get('offer_fingerprint') and vars.get('of
     transfer_guard = "vars['transfer_authorization'] = ''\nif vars.get('exception') in ('human', 'plan', 'dispute'):\n    vars['transfer_queue'] = 'restructuring' if vars['exception'] == 'plan' else 'support'\n    vars['transfer_authorization'] = 'authorized'\n"
     closing = "body = config.get('body', {})\nbody['outcome'] = vars.get('outcome', 'not_verified')\nif body['outcome'] in ('promise', 'paid'):\n    body.pop('reason', None)\nelse:\n    body['reason'] = vars.get('reason', 'declined')\nconfig['body'] = body\n"
     workflow = {"initial_node": "identity", "nodes": {
-        "identity": {"name": "identity", "node_type": "conversation", "on_enter": {"type": "tts", "text": "Am I speaking with the customer?"}, "extraction_schema": [{"name": "speech_event", "type": "string", "enum": ["", "yes", "question"], "min_confidence": 0, "max_retries": 1}], "transitions": [route("decision")]},
-        "decision": code_node("decision", decision, [route("account", guard("bank_status", "verified")), route("verify", guard("route", "verify")), route("identity")]),
-        "verify": {"name": "verify", "node_type": "api_request", "passthrough": True, "pre_actions": [api("verify_identity", {"customer_id": "{{customer_id}}", "field": "date_of_birth", "answer": "{{answer}}"}, post_process_code=identity)], "transitions": [route("decision")]},
+        "identity": {"name": "identity", "node_type": "conversation", "on_enter": {"type": "tts", "text": "Am I speaking with the customer?"}, "extraction_schema": [{"name": "speech_event", "type": "string", "enum": ["", "yes", "no", "question", "third_party"], "min_confidence": 0, "max_retries": 1}, {"name": "speech_answer", "type": "string", "min_confidence": 0, "max_retries": 1}], "transitions": [route("decision")]},
+        "decision": code_node("decision", decision, [route("account", {"logic": "or", "conditions": [{"logic": "and", "conditions": [guard("bank_status", "verified"), guard("route", "account")]}]}), route("verify", guard("route", "verify")), route("offer", guard("route", "offer")), route("identity")]),
+        "verify": {"name": "verify", "node_type": "api_request", "passthrough": True, "pre_actions": [api("verify_identity", {"customer_id": "{{customer_id}}", "field": "date_of_birth", "answer": "{{verification_answer}}"}, post_process_code=identity)], "transitions": [route("decision")]},
         "account": {"name": "account", "node_type": "api_request", "passthrough": True, "pre_actions": [api("get_account", {"customer_id": "{{customer_id}}"})], "transitions": [route("offer")]},
         "offer": code_node("offer", offer, [route("confirmation", guard("route", "confirmation")), route("end")]),
         "confirmation": {"name": "confirmation", "node_type": "conversation", "on_enter": {"type": "tts", "text": "Do you confirm {{validated_amount}} on {{validated_date}}?"}, "extraction_schema": [{"name": "approval", "type": "string", "enum": ["", "yes", "no", "question", "human", "plan", "hardship", "dispute"], "min_confidence": 0, "max_retries": 1}, {"name": "correction", "type": "string", "enum": ["", "yes", "no"], "min_confidence": 0, "max_retries": 1}], "transitions": [route("approval")]},
@@ -98,17 +133,19 @@ elif not vars.get('recorded') and vars.get('offer_fingerprint') and vars.get('of
     workflow["tools"][0]["config"]["alwaysRunsAt"] = ["end_of_call"]
     policy = {"security": {
         "customer_id_field": "customer_id", "customer_id_variable": "customer_id",
-        "identity_nodes": ["identity"], "trusted_variables": ["bank_status", "record_authorization", "recorded", "validated_product", "validated_amount", "validated_date", "offer_fingerprint", "readback_fingerprint", "exception", "route", "stage", "write_attempts", "write_result", "transfer_authorization", "transfer_queue"],
+        "identity_nodes": ["identity"], "trusted_variables": ["bank_status", "record_authorization", "recorded", "validated_product", "validated_amount", "validated_date", "offer_fingerprint", "readback_fingerprint", "exception", "route", "stage", "write_attempts", "write_result", "persuasion_attempts", "party_confirmation", "verification_answer", "transfer_authorization", "transfer_queue"],
         "bank_verification_variable": "bank_status", "bank_gate": {"node": "decision", "variable": "bank_status", "operand": "verified", "target": "account"},
         "account_nodes": ["account"], "offer_guard_node": "offer", "approval_guard_node": "approval", "confirmation_nodes": ["confirmation"], "record_nodes": ["record"], "close_nodes": ["end"],
-        "decision_node": "decision", "write_attempt_limit": 2,
-        "validation_state": {"proposed_amount": "amount", "proposed_date": "date", "approval_event": "approval", "correction": "correction", "recorded": "recorded", "offer_fingerprint": "offer_fingerprint", "readback_fingerprint": "readback_fingerprint", "exception": "exception", "route": "route", "stage": "stage", "write_attempts": "write_attempts", "write_result": "write_result"},
-        "validation_events": {name: name for name in ("yes", "no", "question", "human", "plan", "hardship", "dispute")},
+        "decision_node": "decision", "write_attempt_limit": 2, "party_confirmation_operand": "confirmed", "identity_answer_request_field": "answer",
+        "validation_state": {"proposed_amount": "amount", "proposed_date": "date", "approval_event": "approval", "correction": "correction", "decision_event": "speech_event", "identity_answer": "speech_answer", "persuasion_attempts": "persuasion_attempts", "party_confirmation": "party_confirmation", "recorded": "recorded", "offer_fingerprint": "offer_fingerprint", "readback_fingerprint": "readback_fingerprint", "exception": "exception", "route": "route", "stage": "stage", "write_attempts": "write_attempts", "write_result": "write_result"},
+        "validation_events": {name: name for name in ("yes", "no", "question", "human", "plan", "hardship", "dispute", "third_party")},
         "validation_routes": {name: name for name in ("account", "confirmation", "record", "offer", "transfer", "end")},
-        "validation_fixture": {"customer_id": "c-fixture", "amount": "25", "date": "2026-10-14", "bank_product": "p1", "now": "2026-10-14T09:00:00", "bank_status": "verified"},
+        "validation_fixture": {"customer_id": "c-fixture", "amount": "25", "date": "2026-10-14", "bank_product": "p1", "now": "2026-10-14T09:00:00", "bank_status": "verified", "stage": "payment"},
         "validation_confirmation_fixture": {"approval": "yes", "correction": ""},
         "validation_correction_fixture": {"approval": "yes", "correction": "yes"},
         "validation_identity_fixture": {"bank_status": "verified", "stage": "identity", "speech_event": "question"},
+        "validation_third_party_fixture": {"bank_status": "unverified", "stage": "identity", "party_confirmation": "confirmed", "speech_event": "third_party", "speech_answer": "tomorrow"},
+        "validation_identity_answer_fixture": {"customer_id": "c-fixture", "bank_status": "unverified", "stage": "identity", "party_confirmation": "confirmed", "speech_event": "yes", "speech_answer": "1990-04-12"},
         "action_guards": {"transfer_to_agent": {"node": "transfer_guard", "variable": "transfer_authorization", "operand": "authorized"}},
     }, "source_rules": [{"id": "A1", "source": "brief.md", "line": 1, "text": "rule", "stage": "identity"}], "unsupported": []}
     checks = [
@@ -140,7 +177,7 @@ class ValidationTests(unittest.TestCase):
 
     def test_gate_bypass_and_nested_conditions(self):
         arguments = candidate()
-        arguments[0]["nodes"]["decision"]["transitions"][0]["condition"] = {"logic": "or", "conditions": [{"logic": "and", "conditions": [guard("bank_status", "verified")["conditions"][0], {"variable": "bank_status", "operator": "equals", "operand": "verified"}]}]}
+        arguments[0]["nodes"]["decision"]["transitions"][0]["condition"] = {"logic": "or", "conditions": [{"logic": "and", "conditions": [guard("bank_status", "verified")["conditions"][0], {"variable": "bank_status", "operator": "equals", "operand": "verified"}, guard("route", "account")["conditions"][0]]}]}
         self.assertTrue(validate(*arguments)["ok"])
         arguments[0]["nodes"]["decision"]["transitions"][0]["condition"]["conditions"].append({"operator": "always"})
         self.assert_rejected(arguments, "bypasses trusted bank")
@@ -180,7 +217,9 @@ class ValidationTests(unittest.TestCase):
     def test_renamed_customer_binding(self):
         arguments = candidate()
         arguments[1]["security"].update(customer_id_field="call_secret", customer_id_variable="session_secret")
-        arguments[1]["security"]["validation_fixture"]["session_secret"] = arguments[1]["security"]["validation_fixture"].pop("customer_id")
+        for fixture_name in ("validation_fixture", "validation_identity_answer_fixture"):
+            fixture = arguments[1]["security"][fixture_name]
+            fixture["session_secret"] = fixture.pop("customer_id")
         for item in arguments[2]["paths"].values():
             schema = item["post"]["requestBody"]["content"]["application/json"]["schema"]
             schema["properties"]["call_secret"] = schema["properties"].pop("customer_id")
@@ -415,7 +454,7 @@ class ValidationTests(unittest.TestCase):
         arguments = candidate()
         arguments[1]["security"]["validation_identity_resume_fixture"] = {"speech_event": "yes"}
         arguments[0]["nodes"]["identity"]["on_enter"]["text"] = "I will now check your account."
-        arguments[0]["nodes"]["decision"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]["default"] = "event = vars.get('speech_event', '')\nvars['speech_event'] = ''\nvars['record_authorization'] = ''\nvars['route'] = 'verify'\nif vars.get('bank_status') == 'verified':\n    if vars.get('stage') == 'identity' and event == 'question':\n        vars['stage'] = 'account_resume'\n        vars['route'] = 'listen'\n    else:\n        vars['stage'] = 'account_pending'\n        vars['route'] = 'account'\n"
+        arguments[0]["nodes"]["decision"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]["default"] += "if vars.get('bank_status') == 'verified' and vars.get('stage') == 'account_pending' and event == 'question':\n    vars['stage'] = 'account_resume'\n    vars['route'] = 'listen'\n"
         arguments[0]["nodes"]["decision"]["transitions"][0]["condition"] = {"logic": "or", "conditions": [{"logic": "and", "conditions": [guard("bank_status", "verified")["conditions"][0], guard("route", "account")["conditions"][0]]}]}
         self.assertTrue(validate(*arguments)["ok"])
         del arguments[1]["security"]["validation_identity_resume_fixture"]
@@ -459,6 +498,101 @@ class ValidationTests(unittest.TestCase):
         code["default"] += "if vars.get('bank_status') == 'verified' and not event:\n    vars['route'] = 'listen'\n"
         arguments[0]["nodes"]["decision"]["transitions"][0]["condition"] = {"logic": "or", "conditions": [{"logic": "and", "conditions": [guard("bank_status", "verified")["conditions"][0], guard("route", "account")["conditions"][0]]}]}
         self.assert_rejected(arguments, "without a fresh caller reply")
+
+    def test_missing_speech_does_not_use_persuasion_or_start_an_offer(self):
+        arguments = candidate()
+        report = validate(*arguments)
+        self.assertTrue(report["ok"], report)
+        code = arguments[0]["nodes"]["decision"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]["default"]
+        _run_check(code, {"vars": {"bank_status": "verified", "stage": "payment", "speech_event": "no"}, "expected": {"persuasion_attempts": 1, "route": "offer"}})
+        for fault, reason in (
+            ("vars['persuasion_attempts'] += 1", "missing speech consumed a persuasion attempt"),
+            ("vars['route'] = 'offer'", "unsafe chain entered offer"),
+            ("vars['route'] = 'verify'", "missing speech must return to a real listener"),
+        ):
+            with self.subTest(fault=fault):
+                arguments = candidate()
+                properties = arguments[0]["nodes"]["decision"]["pre_actions"][0]["function"]["parameters"]["properties"]
+                properties["code"]["default"] += "if vars.get('stage') == 'payment' and not event:\n    " + fault + "\n"
+                report = validate(*arguments)
+                self.assertTrue(all(check["ok"] for check in report["checks"] if not check["name"].startswith("independent_")), report)
+                self.assert_rejected(arguments, reason)
+
+    def test_latest_third_party_overrides_prior_party_confirmation_and_answer(self):
+        arguments = candidate()
+        self.assertTrue(validate(*arguments)["ok"])
+        for fault, reason in (
+            ("if party == 'confirmed' and answer:\n    vars['route'] = 'verify'\n", "unsafe chain entered verify"),
+            ("if event == 'third_party':\n    vars['party_confirmation'] = 'confirmed'\n", "did not clear prior first-party confirmation"),
+        ):
+            with self.subTest(fault=fault):
+                arguments = candidate()
+                properties = arguments[0]["nodes"]["decision"]["pre_actions"][0]["function"]["parameters"]["properties"]
+                properties["code"]["default"] += fault
+                report = validate(*arguments)
+                self.assertTrue(all(check["ok"] for check in report["checks"] if not check["name"].startswith("independent_")), report)
+                self.assert_rejected(arguments, reason)
+
+    def test_decision_controls_require_real_distinct_trusted_state(self):
+        for role in ("decision_event", "identity_answer", "persuasion_attempts", "party_confirmation"):
+            with self.subTest(role=role):
+                arguments = candidate()
+                arguments[1]["security"]["validation_state"][role] = "unused_" + role
+                if role not in ("decision_event", "identity_answer"):
+                    arguments[1]["security"]["trusted_variables"].append("unused_" + role)
+                self.assert_rejected(arguments, "actual guard reads/writes")
+        arguments = candidate()
+        arguments[1]["security"]["validation_state"]["party_confirmation"] = "bank_status"
+        self.assert_rejected(arguments, "separate from bank, record and customer")
+        arguments = candidate()
+        arguments[1]["security"]["trusted_variables"].remove("persuasion_attempts")
+        self.assert_rejected(arguments, "control roles must be trusted")
+        arguments = candidate()
+        arguments[1]["security"]["validation_third_party_fixture"] = {}
+        self.assert_rejected(arguments, "third-party fixture must provide current identity state")
+        arguments = candidate()
+        arguments[1]["security"]["party_confirmation_operand"] = ""
+        self.assert_rejected(arguments, "party_confirmation_operand")
+
+    def test_spoken_identity_dates_reach_verify_with_the_original_iso_answer(self):
+        arguments = candidate()
+        report = validate(*arguments)
+        self.assertTrue(report["ok"], report)
+        date_checks = [check for check in report["checks"] if check["name"].startswith("independent_identity_date_words_")]
+        self.assertEqual(len(date_checks), 6)
+        self.assertTrue(all(check["ok"] for check in date_checks), report)
+        code = arguments[0]["nodes"]["decision"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]["default"]
+        _run_check(code, {"vars": arguments[1]["security"]["validation_identity_answer_fixture"], "expected": {"verification_answer": "1990-04-12", "route": "verify", "speech_answer": ""}})
+        for fault, reason in (
+            ("if answer and not re.fullmatch(r'[0-9]{4}-[0-9]{2}-[0-9]{2}', answer):\n    vars['route'] = 'listen'\n", "spoken identity date did not reach a verification API"),
+            ("if vars.get('route') == 'verify':\n    vars['verification_answer'] = '2001-01-01'\n", "not bound as the canonical ISO verification answer"),
+        ):
+            with self.subTest(fault=fault):
+                arguments = candidate()
+                properties = arguments[0]["nodes"]["decision"]["pre_actions"][0]["function"]["parameters"]["properties"]
+                properties["code"]["default"] += fault
+                report = validate(*arguments)
+                self.assertTrue(all(check["ok"] for check in report["checks"] if not check["name"].startswith("independent_")), report)
+                self.assert_rejected(arguments, reason)
+        arguments = candidate()
+        body = arguments[0]["nodes"]["verify"]["pre_actions"][0]["function"]["parameters"]["properties"]["body"]
+        body["properties"]["answer"]["default"] = "{{speech_answer}}"
+        self.assert_rejected(arguments, "no bound answer")
+
+    def test_identity_date_fixture_and_request_field_are_real(self):
+        for invalid in ({}, {"stage": "identity", "speech_answer": "12 April 1990"}, {"stage": "identity", "speech_answer": "1990-02-30"}):
+            with self.subTest(fixture=invalid):
+                arguments = candidate()
+                arguments[1]["security"]["validation_identity_answer_fixture"] = invalid
+                self.assert_rejected(arguments, "validation_identity_answer_fixture")
+        for invalid in ("not_a_request_field", "customer_id", ""):
+            with self.subTest(request_field=invalid):
+                arguments = candidate()
+                arguments[1]["security"]["identity_answer_request_field"] = invalid
+                self.assert_rejected(arguments, "actual verification request property")
+        arguments = candidate()
+        arguments[1]["security"]["validation_third_party_fixture"] = {"stage": "identity", "speech_event": "third_party"}
+        self.assert_rejected(arguments, "nonempty actual speech field besides decision_event")
 
 
 if __name__ == "__main__":

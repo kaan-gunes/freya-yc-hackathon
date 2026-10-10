@@ -11,7 +11,7 @@ done
 set +a
 for TASK_PYTHON in /opt/homebrew/bin/python3 python3 python; do
   if command -v "$TASK_PYTHON" >/dev/null 2>&1 && "$TASK_PYTHON" -c 'import sys;sys.exit(sys.version_info < (3,10))'; then
-    cd "$TASK_ROOT/build-the-builder"
+    cd "$TASK_ROOT"
     exec "$TASK_PYTHON" "$TASK_ROOT/scripts/test_agent.py" "$@"
   fi
 done

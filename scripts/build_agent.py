@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build a portable Freya phone agent from complete briefs and an OpenAPI file."""
 import argparse
+import copy
 import datetime as dt
 import fcntl
 import hashlib
@@ -126,6 +127,19 @@ def parse_model_output(text):
     if text.startswith("```json\n") and text.endswith("\n```"):
         text = text[len("```json\n"):-len("\n```")]
     return json.loads(text)
+
+
+def merge_patch(target, patch):
+    """Apply RFC 7396 without changing the prior candidate."""
+    if not isinstance(patch, dict):
+        return copy.deepcopy(patch)
+    merged = copy.deepcopy(target) if isinstance(target, dict) else {}
+    for key, value in patch.items():
+        if value is None:
+            merged.pop(key, None)
+        else:
+            merged[key] = merge_patch(merged.get(key), value)
+    return merged
 
 
 def test_version_errors(simulations, version, reps):
@@ -273,12 +287,13 @@ def main():
             command += ["--model", args.model]
         command.append("-")
         from builder.validation import validate
-        model_prompt, all_events = prompt, []
+        model_prompt, all_events, candidate = prompt, [], None
         manifest["generation_attempts"] = []
         for attempt in (1, 2, 3):
+            output_format = "merge_patch" if candidate is not None else "full_candidate"
             purpose = ("Extract sourced policy and generate the portable workflow and local checks." if attempt == 1
                        else "Repair the generated candidate using validation errors and the same complete source inputs.")
-            event("model_begin", attempt=attempt, model=args.model or "Codex CLI default", purpose=purpose)
+            event("model_begin", attempt=attempt, model=args.model or "Codex CLI default", purpose=purpose, output_format=output_format)
             print("Generating policy and workflow with Codex." if attempt == 1 else "Repairing the candidate from validation errors.", flush=True)
             try:
                 returncode, stdout, stderr = invoke(command, deadline, env=model_environment(), input_text=model_prompt)
@@ -290,7 +305,7 @@ def main():
             manifest["builder_model"] = model
             all_events += [{"attempt": attempt, **row} for row in rows]
             write_json(folder / "model-events.json", all_events)
-            event("model_end", attempt=attempt, model=model, purpose=purpose, exit_code=returncode)
+            event("model_end", attempt=attempt, model=model, purpose=purpose, output_format=output_format, exit_code=returncode)
             if returncode:
                 raise RuntimeError("Codex generation failed: " + ("; ".join(errors) or redact(stderr)[-1200:]))
             raw_path = folder / "raw.json"
@@ -299,11 +314,15 @@ def main():
             (folder / f"raw-attempt-{attempt}.json").write_text(redact(raw_text))
             try:
                 raw = parse_model_output(raw_text)
+                if candidate is not None:
+                    raw = merge_patch(candidate, raw)
                 if not isinstance(raw, dict) or set(raw) != {"policy", "workflow", "checks", "uncertainties", "summary"}:
                     raise ValueError("Model result must contain exactly policy/workflow/checks/uncertainties/summary.")
                 if not isinstance(raw["uncertainties"], list) or any(not isinstance(item, str) for item in raw["uncertainties"]) or not isinstance(raw["summary"], str):
                     raise ValueError("Model uncertainties must be a string list and summary must be a string.")
+                candidate = raw
                 write_json(raw_path, raw)
+                write_json(folder / f"candidate-attempt-{attempt}.json", raw)
                 policy, workflow, checks = (raw[key] for key in ("policy", "workflow", "checks"))
                 for name, value in (("policy", policy), ("workflow", workflow), ("checks", checks)):
                     write_json(folder / f"{name}.json", value)
@@ -351,12 +370,20 @@ def main():
                 write_json(folder / f"validation-attempt-{attempt}.json", report)
                 event("freya_validation", attempt=attempt, valid=not dry_run_failed)
             manifest["generation_attempts"].append({"attempt": attempt, "model": model, "valid": valid,
+                                                     "output_format": output_format,
                                                      "errors": report.get("errors", [])})
             if valid:
                 break
-            model_prompt = (prompt + "\n=== PRIOR GENERATED CANDIDATE ===\n" + redact(raw_text)
+            repair_instruction = (
+                "For this repair, override earlier full-output instructions: return ONLY a JSON merge patch (RFC 7396) "
+                "with changed policy/workflow/checks/uncertainties/summary fields. Omit unchanged fields. "
+                "Objects merge recursively, null deletes a key, and arrays replace the whole array. "
+                "Include complete replacement code strings only when they change."
+                if candidate is not None else
+                "Return a complete corrected plain JSON object with policy/workflow/checks/uncertainties/summary.")
+            model_prompt = (prompt + "\n=== PRIOR GENERATED CANDIDATE ===\n" + redact(json.dumps(candidate) if candidate is not None else raw_text)
                             + "\n=== VALIDATION ERRORS ===\n" + redact(json.dumps(report, ensure_ascii=False))
-                            + "\nReturn a complete corrected plain JSON object with policy/workflow/checks/uncertainties/summary. "
+                            + "\n" + repair_instruction + " "
                             "Use only the original inputs for business facts. Do not weaken checks or skip source rules.\n")
         if not valid:
             raise ValueError("Generated workflow failed validation; see validation.json.")

@@ -4,6 +4,7 @@ import io
 import json
 import os
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import Mock, call, patch
@@ -18,6 +19,19 @@ import run_cases
 
 
 class TestHelperChecks(unittest.TestCase):
+    def test_shell_wrapper_keeps_documented_paths_relative_to_repository(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "scripts").mkdir()
+            wrapper = root / "scripts/test-agent.sh"
+            wrapper.write_text((ROOT / "scripts/test-agent.sh").read_text())
+            (root / "scripts/test_agent.py").write_text(
+                "import sys\nfrom pathlib import Path\nprint(Path(sys.argv[-1]).resolve())\n")
+            for flag in ("--resume", "--cases"):
+                result = subprocess.run(["bash", str(wrapper), flag, "build-the-builder/results/saved"],
+                                        cwd=root, capture_output=True, text=True, check=True)
+                self.assertEqual(result.stdout.strip(), str((root / "build-the-builder/results/saved").resolve()))
+
     def test_get_503_is_bounded_but_writes_and_auth_errors_are_not_retried(self):
         unavailable = RuntimeError("GET /simulation -> 503: API key validation temporarily unavailable")
         api = Mock(side_effect=[unavailable, unavailable, {"status": "completed"}])
@@ -223,6 +237,31 @@ class TestHelperChecks(unittest.TestCase):
         self.assertEqual([item["kind"] for item in diagnostics],
                          ["state_write_rejected", "extraction_failure", "state_write_rejected", "router_unmatched"])
         self.assertTrue(all("variable_table" not in item["event"] for item in diagnostics))
+
+    def test_semantic_fallback_reports_only_direct_current_route_status_without_private_speech(self):
+        private_speech = "Synthetic private identity answer"
+        secret = "synthetic-private-key"
+        events = [
+            {"event": "route_evaluated", "matched": True,
+             "variable_table": {"decision_status": "fallback:incomplete_identity_answer", "speech_text": private_speech}},
+            {"event": "route_evaluated", "matched": True,
+             "variable_table": {"decision_status": "fallback:incomplete_identity_answer:" + secret, "speech_text": private_speech}},
+            {"event": "route_evaluated", "matched": True, "variable_table": {"decision_status": "processed",
+             "snapshot": {"decision_status": "fallback:stale"}}},
+            {"event": "route_evaluated", "matched": True, "variable_table": {"decision_status": {"value": "fallback:stale"}}},
+            {"event": "variable_extracted", "value": "fallback:stale", "variable_table": {"decision_status": "fallback:stale"}},
+            {"event": "node_enter", "workflowSnapshot": {"variable_table": {"decision_status": "fallback:stale"}}}]
+        messages = [{"role": "system", "messageId": str(index), "message": json.dumps(event)} for index, event in enumerate(events)]
+        messages.append({"role": "user", "message": json.dumps(events[0])})
+        with patch.dict(os.environ, {"FREYA_BANK_TEAM_KEY": secret}):
+            diagnostics = helper.call_diagnostics({"messages": messages})
+        self.assertEqual([item["kind"] for item in diagnostics], ["decision_fallback", "decision_fallback"])
+        self.assertEqual([item["message_id"] for item in diagnostics], ["0", "1"])
+        self.assertEqual(json.loads(diagnostics[0]["event"])["decision_status"], "fallback:incomplete_identity_answer")
+        self.assertIn("[REDACTED]", diagnostics[1]["event"])
+        self.assertNotIn(secret, json.dumps(diagnostics))
+        self.assertNotIn(private_speech, json.dumps(diagnostics))
+        self.assertNotIn("variable_table", json.dumps(diagnostics))
 
     def test_unknown_create_is_saved_and_cannot_be_resumed(self):
         with tempfile.TemporaryDirectory() as directory:

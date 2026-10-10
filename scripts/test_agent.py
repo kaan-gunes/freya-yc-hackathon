@@ -75,12 +75,19 @@ def call_diagnostics(call):
             kinds.append("extraction_failure")
         if name == "route_evaluated" and event.get("matched") is False:
             kinds.append("router_unmatched")
+        variables = event.get("variable_table")
+        decision_status = variables.get("decision_status") if isinstance(variables, dict) else None
+        semantic_fallback = name == "route_evaluated" and isinstance(decision_status, str) and decision_status.startswith("fallback:")
+        if semantic_fallback:
+            kinds.append("decision_fallback")
         if "fallback" in name or (name == "node_enter" and "fallback" in str(event.get("reason", "")).lower()):
             kinds.append("router_fallback")
         details = {key: event[key] for key in ("event", "function", "name", "reason", "error", "confidence", "value",
                                              "matched", "from_node", "target", "status", "accepted", "success") if key in event}
         if validation_errors:
             details["validation_errors"] = validation_errors
+        if semantic_fallback:
+            details["decision_status"] = decision_status
         text = json.dumps(details, ensure_ascii=False)
         for kind in kinds:
             diagnostics.append({"kind": kind, "message_id": message.get("messageId", index),

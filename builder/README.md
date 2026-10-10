@@ -30,6 +30,8 @@ Each run has a real wall-clock limit, at most 30 minutes, including model work
 and tests. Use the same slot to update the same workflow. The baseline is kept.
 Up to two automatic repairs are allowed after local or Freya check failures,
 within the same deadline. No failed candidate is published.
+Repairs return only a JSON merge patch; the builder assembles and validates the
+complete candidate before any publish. Arrays replace the entire prior array.
 All call code and policy are inside the workflow; no local server is needed.
 
 After the first real test passes, run three repeats against that same published
@@ -51,13 +53,17 @@ Online runs also keep the server export and published workflow/agent/version IDs
 The trace records the builder model, purpose, timing, source hashes and test state.
 The code revision includes whether the worktree has changes. Full model reasoning
 is not stored. Generated artifacts are local and ignored by Git.
+`raw-attempt-N.json` preserves the model response, including sparse repairs;
+`candidate-attempt-N.json` preserves the assembled full candidate.
 
 The local validator checks stage boundaries, API fields, Python syntax, and
 executes generated guard examples with restricted Python. It also runs its own
 expected checks on shared state across offer, readback, approval and record.
 These cover valid recording, rejected offers followed by yes, changed offers,
 corrections, mixed exceptions, duplicate writes, failed/unknown writes, retry
-limits and returning from completed identity. Synthetic fixture inputs and
+limits, returning from completed identity, silent replies, third-party identity
+interrupts and six month-name date forms at the real verification request.
+Synthetic fixture inputs and
 variable roles come from the candidate; expected safety rules come from code.
 
 The graph checks require offer/readback guards on record paths, reachable actions
@@ -84,7 +90,8 @@ as they arrive. Its summary separates call execution, result reads and scoring.
 Each successful metadata source adds version evidence. Call versions use
 `entityVersionNumber` only for calls matched to this simulation and agent;
 dashboard versions are not test evidence. Call diagnostics expose rejected
-state writes, extraction errors and unmatched/fallback routes.
+state writes, extraction errors, unmatched routes and direct decision fallbacks,
+without copying raw speech into diagnostic excerpts.
 
 If a read fails after a simulation was created, resume the saved run:
 

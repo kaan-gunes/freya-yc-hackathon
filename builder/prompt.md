@@ -55,7 +55,7 @@ customer_id_variable: the corresponding call input variable from the brief
 trusted_variables: [all bank state, validated offer, authorization, record state,
                     control counters and closing state variable names]
 bank_verification_variable: the bank-only string flag
-bank_gate: {node: identity node holding verify_identity,
+bank_gate: {node: code node whose guarded transition enters the account action,
             variable: bank-only flag, operand: "verified", target: account action}
 account_nodes: [nodes containing get_account]
 offer_guard_node: offer-validation code node
@@ -68,9 +68,10 @@ close_nodes: [terminal nodes; if explicit close action is used, that node too]
 decision_node: code node processing each ordinary caller reply
 validation_state: {proposed_amount, proposed_date, approval_event, correction,
                    recorded, offer_fingerprint, readback_fingerprint, exception,
-                   route, stage, write_attempts, write_result}
+                   route, stage, write_attempts, write_result, decision_event,
+                   persuasion_attempts, party_confirmation, identity_answer}
   # Values are actual vars keys, not example values.
-validation_events: {yes, no, question, human, plan, hardship, dispute}
+validation_events: {yes, no, question, human, plan, hardship, dispute, third_party}
   # Values are actual extraction enum operands.
 validation_routes: {account, confirmation, record, offer, transfer, end}
   # Values are actual route operands written by code.
@@ -84,6 +85,15 @@ validation_identity_fixture: {synthetic verified state still at identity,
 validation_identity_resume_fixture: {fresh speech accepting the return to
                                      account loading, if the question needs
                                      a separate fixed listening reply}
+party_confirmation_operand: actual trusted first-party confirmation flag
+validation_identity_answer_fixture: {complete pre-verification identity state,
+                                    prior party confirmation and a canonical
+                                    synthetic YYYY-MM-DD raw identity answer}
+identity_answer_request_field: actual verification API answer property
+validation_third_party_fixture: {complete pre-verification identity state with
+                                prior party confirmation and a fresh relative
+                                admission containing a complete identity answer
+                                in an actual main speech input}
 action_guards: {schedule_callback: {node, variable, operand},
                 transfer_to_agent: {node, variable, operand}}
   # Include only operations actually used; add add_note if required by input.
@@ -123,6 +133,9 @@ it must not reject a clear positive sentence solely because it is longer.
 Separate party confirmation from bank identity. A third party cannot answer the
 security questions. Answer allowed caller questions before any repeat question.
 Do not infer name confirmation from an ambiguous greeting. Use the brief's limit.
+At every pre-verification stage, a current third-party admission overrides any
+older party confirmation. Clear that confirmation, do not process the relative's
+security answers, and follow the source's third-party/callback path.
 
 Use NO model-visible tools. Extract each identity answer, check completeness in
 the decision code, then route to an engine verify_identity api_request pre_action.
@@ -325,7 +338,13 @@ Use plain strings for untrusted raw date/amount/identity text. A date string has
 an explicit extraction instruction using call {{now}} and input calendar rules;
 do not rely on the platform date anchor (the real clock). Keep vague phrases
 distinct from exact dates; code normalizes relative/numeric dates and validates
-them. Trusted canonical dates may also be strings, checked by portable code.
+them. The shared date parser also accepts English month names in day-first and
+month-first order, with case differences, commas and ordinal days, such as
+"14 March 1988", "March 14th, 1988" and "14th march, 1988". Use explicit month
+names and datetime.date, without locale-dependent parsing or new dependencies.
+Do not assume extraction normalizes a plain string: raw identity and payment
+dates both pass through this parser and become validated YYYY-MM-DD values.
+Trusted canonical dates may also be strings, checked by portable code.
 Never clear a typed date with ''. Never set a missing speech field to a valid
 placeholder date. Copy the current speech inputs to local variables, then clear
 EVERY extracted field with literal vars assignments BEFORE processing this
@@ -394,6 +413,23 @@ negative readback with no persuasion, plan during verified account-resume, and
 complete bank verification with cleared speech loading account without another
 customer reply. Test a question about interest changing separately from a real
 amount/date correction. Ensure required hardship sympathy reaches emitted TTS.
+Map decision_event to the actual main extracted event, and party_confirmation
+and persuasion_attempts to the actual trusted controls read and written by
+decision code. The counter is numeric. The valid offer fixture includes complete
+bank-derived negotiation state, including any derived floor/full amounts.
+Map identity_answer to the actual main raw identity answer field, distinct from
+other roles and read and cleared by decision code. Supply a complete identity
+answer fixture with its real pending question/stage and a synthetic canonical
+ISO birth date. Declare the actual verification request answer field. The builder
+will replace that raw date with month-name variants and require the real verify
+action's resolved request answer to equal the same canonical ISO date. Add a
+generated regression for this path as well as split identity answers.
+Empty/rejected extraction is not a caller refusal or deliberate non-answer:
+repeat the current stage question without a new offer or persuasion use. Use a
+distinct event for a genuine non-answer where the brief calls for persuasion.
+Test a relative admitting their role during identity and supplying a complete
+security answer after an earlier party yes. Those answers must never reach bank
+verification. Raw relative dates on hardship offers use the common date parser.
 
 Keep the generated implementation small enough to inspect. Reuse identical
 snippets only where safe, group related decisions in code, and keep dialogue

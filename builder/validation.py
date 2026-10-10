@@ -3,6 +3,7 @@
 import ast
 import builtins
 import copy
+import datetime
 import importlib
 import multiprocessing
 import re
@@ -389,8 +390,10 @@ def _independent_checks(nodes, snippets, security, checks):
     correction_fixture = security.get("validation_correction_fixture", {})
     identity = security.get("validation_identity_fixture", {})
     identity_resume = security.get("validation_identity_resume_fixture", {})
-    required_roles = ("proposed_amount", "proposed_date", "approval_event", "correction", "recorded", "offer_fingerprint", "readback_fingerprint", "exception", "route", "stage", "write_attempts", "write_result")
-    for label, data, names in (("validation_state", roles, required_roles), ("validation_events", events, ("yes", "no", "question", "human", "plan", "hardship", "dispute")), ("validation_routes", routes, ("account", "confirmation", "record", "offer", "transfer", "end"))):
+    third_party_fixture = security.get("validation_third_party_fixture", {})
+    identity_answer_fixture = security.get("validation_identity_answer_fixture", {})
+    required_roles = ("proposed_amount", "proposed_date", "approval_event", "correction", "decision_event", "identity_answer", "persuasion_attempts", "party_confirmation", "recorded", "offer_fingerprint", "readback_fingerprint", "exception", "route", "stage", "write_attempts", "write_result")
+    for label, data, names in (("validation_state", roles, required_roles), ("validation_events", events, ("yes", "no", "question", "human", "plan", "hardship", "dispute", "third_party")), ("validation_routes", routes, ("account", "confirmation", "record", "offer", "transfer", "end"))):
         if not isinstance(data, dict) or any(not isinstance(data.get(name), str) or not data[name] for name in names):
             return [{"name": "independent_contract", "ok": False, "error": f"security.{label} needs every declared string role"}]
     if len(set(roles.values())) != len(roles):
@@ -404,16 +407,46 @@ def _independent_checks(nodes, snippets, security, checks):
             contract_errors.append(f"{label} fixture must provide fresh speech inputs")
         elif set(data) & (trusted | {security.get("customer_id_variable")}):
             contract_errors.append(f"{label} fixture may provide fresh speech only")
-    if not {roles[name] for name in ("recorded", "offer_fingerprint", "readback_fingerprint", "exception", "route", "stage", "write_attempts", "write_result")} <= trusted:
+    if not {roles[name] for name in ("recorded", "offer_fingerprint", "readback_fingerprint", "exception", "route", "stage", "write_attempts", "write_result", "persuasion_attempts", "party_confirmation")} <= trusted:
         contract_errors.append("validation_state control roles must be trusted")
     authorization = security.get("record_authorization_variable", "record_authorization")
     authorized = security.get("record_authorization_operand", "authorized")
+    party_confirmed = security.get("party_confirmation_operand")
+    if not isinstance(party_confirmed, str) or not party_confirmed:
+        contract_errors.append("security.party_confirmation_operand must be a nonempty string")
+    if not isinstance(third_party_fixture, dict) or not third_party_fixture or not third_party_fixture.get(roles["stage"]):
+        contract_errors.append("third-party fixture must provide current identity state and fresh speech inputs")
+    reserved = {security.get("bank_verification_variable"), authorization, security.get("customer_id_variable")}
+    if {roles[name] for name in ("decision_event", "identity_answer", "persuasion_attempts", "party_confirmation")} & reserved:
+        contract_errors.append("decision controls must be separate from bank, record and customer controls")
+    decision = security.get("decision_node")
+    decision_inputs = {field.get("name") for node in nodes.values() if any(item.get("target_node") == decision for item in node.get("transitions", [])) for field in node.get("extraction_schema", [])}
+    if roles["decision_event"] not in decision_inputs or roles["decision_event"] in trusted:
+        contract_errors.append("decision_event must name fresh speech consumed by the decision node")
+    if roles["identity_answer"] not in decision_inputs or roles["identity_answer"] in trusted:
+        contract_errors.append("identity_answer must name fresh speech consumed by the decision node")
+    if isinstance(third_party_fixture, dict) and not any(third_party_fixture.get(name) for name in decision_inputs - {roles["decision_event"]}):
+        contract_errors.append("third-party fixture needs a nonempty actual speech field besides decision_event")
+    canonical_identity_answer = None
+    try:
+        if not isinstance(identity_answer_fixture, dict) or not identity_answer_fixture.get(roles["stage"]):
+            raise ValueError("identity answer fixture needs current pre-verification state")
+        canonical_identity_answer = identity_answer_fixture.get(roles["identity_answer"])
+        if not isinstance(canonical_identity_answer, str) or datetime.date.fromisoformat(canonical_identity_answer).isoformat() != canonical_identity_answer:
+            raise ValueError("identity answer fixture needs a valid canonical ISO raw answer")
+    except (TypeError, ValueError) as exc:
+        contract_errors.append(f"validation_identity_answer_fixture: {exc}")
+    verification_requests = [(identifier, tool) for identifier, node in nodes.items() for tool in node.get("pre_actions", []) if tool.get("function", {}).get("name") in security.get("verification_tools", ["verify_identity"])]
+    answer_request_field = security.get("identity_answer_request_field")
+    if not isinstance(answer_request_field, str) or not answer_request_field or answer_request_field == security.get("customer_id_field") or not any(answer_request_field in tool.get("function", {}).get("parameters", {}).get("properties", {}).get("body", {}).get("properties", {}) for _, tool in verification_requests):
+        contract_errors.append("identity_answer_request_field must name an actual verification request property")
     offer, approval = security.get("offer_guard_node"), security.get("approval_guard_node")
     record_nodes = security.get("record_nodes", [])
     readbacks = security.get("confirmation_nodes", [])
     for identifier, required_reads, required_writes in (
         (offer, ("proposed_amount", "proposed_date"), ("offer_fingerprint", "readback_fingerprint")),
         (approval, ("approval_event", "correction", "recorded", "offer_fingerprint", "readback_fingerprint", "write_attempts", "write_result"), ("route", "write_attempts")),
+        (decision, ("decision_event", "identity_answer", "persuasion_attempts", "party_confirmation"), ("decision_event", "identity_answer", "persuasion_attempts", "party_confirmation")),
     ):
         if identifier not in snippets:
             contract_errors.append(f"missing guard snippet {identifier}")
@@ -439,8 +472,10 @@ def _independent_checks(nodes, snippets, security, checks):
                         raise ValueError(f"consumed extraction {field.get('name')} was not cleared")
         return output
 
-    def advance(identifier, state):
+    def advance(identifier, state, forbidden=()):
         for _ in range(len(nodes) + 1):
+            if identifier in forbidden:
+                raise ValueError(f"unsafe chain entered {identifier}")
             node = nodes[identifier]
             if node.get("node_type") != "code":
                 return state, identifier
@@ -472,8 +507,10 @@ def _independent_checks(nodes, snippets, security, checks):
         return advance(approval, state)
 
     def bound_request(target, state):
+        bodies = []
         for tool in nodes[target].get("pre_actions", []):
             body = tool.get("function", {}).get("parameters", {}).get("properties", {}).get("body", {})
+            values = {}
             for name, field in body.get("properties", {}).items():
                 value = field.get("default")
                 placeholder = PLACEHOLDER.fullmatch(value) if isinstance(value, str) else None
@@ -488,6 +525,9 @@ def _independent_checks(nodes, snippets, security, checks):
                     raise ValueError(f"authorized request has non-finite/boolean {name}")
                 if "enum" in field and value not in field["enum"]:
                     raise ValueError(f"authorized request has invalid {name} enum")
+                values[name] = value
+            bodies.append((tool.get("function", {}).get("name"), values))
+        return bodies
 
     def run(name, function):
         report = {"name": name, "ok": False}
@@ -653,6 +693,64 @@ def _independent_checks(nodes, snippets, security, checks):
             raise ValueError("completed verified identity must load account without a fresh caller reply")
         assert_denied(state)
     run("independent_verified_identity_completion", identity_complete)
+
+    def missing_speech():
+        state = copy.deepcopy(fixture)
+        for node in nodes.values():
+            for field in node.get("extraction_schema", []):
+                state[field["name"]] = ""
+        state[authorization] = ""
+        state[roles["persuasion_attempts"]] = 0
+        state, target = advance(decision, state, (offer, *readbacks, *record_nodes))
+        assert_denied(state)
+        if nodes[target].get("node_type") != "conversation" or not nodes[target].get("extraction_schema"):
+            raise ValueError("missing speech must return to a real listener without a bank action")
+        if not _json_equal(state.get(roles["persuasion_attempts"]), 0):
+            raise ValueError("missing speech consumed a persuasion attempt")
+    run("independent_missing_decision_speech", missing_speech)
+
+    def identity_date_answer(raw_answer):
+        state = copy.deepcopy(identity_answer_fixture)
+        state[security.get("bank_verification_variable")] = "unverified"
+        state[roles["party_confirmation"]] = party_confirmed
+        state[roles["identity_answer"]] = raw_answer
+        state[authorization] = ""
+        state, target = advance(decision, state, (offer, *readbacks, *record_nodes, *security.get("account_nodes", [])))
+        assert_denied(state)
+        if nodes[target].get("node_type") != "api_request" or target not in {identifier for identifier, _ in verification_requests}:
+            raise ValueError("complete spoken identity date did not reach a verification API action")
+        requests = bound_request(target, state)
+        if not any(name in security.get("verification_tools", ["verify_identity"]) and body.get(answer_request_field) == canonical_identity_answer for name, body in requests):
+            raise ValueError("spoken identity date was not bound as the canonical ISO verification answer")
+    day = datetime.date.fromisoformat(canonical_identity_answer)
+    month = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December")[day.month - 1]
+    suffix = "th" if 11 <= day.day % 100 <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(day.day % 10, "th")
+    for label, answer in (
+        ("day_first", f"{day.day} {month} {day.year:04d}"),
+        ("month_first", f"{month} {day.day} {day.year:04d}"),
+        ("ordinal_day", f"{day.day}{suffix} {month} {day.year:04d}"),
+        ("ordinal_month_comma", f"{month} {day.day}{suffix}, {day.year:04d}"),
+        ("upper_case", f"{day.day} {month.upper()} {day.year:04d}"),
+        ("lower_case_comma", f"{month.lower()} {day.day}, {day.year:04d}"),
+    ):
+        run(f"independent_identity_date_words_{label}", lambda answer=answer: identity_date_answer(answer))
+
+    def latest_third_party():
+        state = copy.deepcopy(third_party_fixture)
+        bank_var = security.get("bank_verification_variable")
+        state[bank_var] = "unverified"
+        state[authorization] = ""
+        state[roles["decision_event"]] = events["third_party"]
+        state[roles["party_confirmation"]] = party_confirmed
+        verification_nodes = [identifier for identifier, _ in verification_requests]
+        forbidden = (offer, *readbacks, *record_nodes, *security.get("account_nodes", []), *verification_nodes)
+        state, target = advance(decision, state, forbidden)
+        assert_denied(state)
+        if state.get(roles["party_confirmation"]) == party_confirmed or state.get(bank_var) == "verified":
+            raise ValueError("latest third-party speech did not clear prior first-party confirmation")
+        if nodes[target].get("node_type") == "api_request":
+            bound_request(target, state)
+    run("independent_latest_third_party_blocks_identity", latest_third_party)
     for operation, action_gate in security.get("action_guards", {}).items():
         def empty_action(action_gate=action_gate):
             state = step(action_gate["node"], {})

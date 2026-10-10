@@ -1,12 +1,14 @@
 # Second builder result - 2026-10-11
 
-Status: compiler changes and local checks are complete; the new live gate is pending.
+Status: version 2 passed publication checks but failed PUB-01. Follow-up compiler
+changes pass local checks; a new generation and live gate are next.
 Dates in this report use Europe/Istanbul. Artifact names use UTC.
 
 ## Code and checks
 
-Code commit: `9b4764c` (`fix: keep phone decisions current and preserve test evidence`).
-All 44 repository tests pass, and the builder self-check passes.
+Code commits: `9b4764c` (`fix: keep phone decisions current and preserve test evidence`)
+and `030cd23` (`fix: cover normal verification and bounded generator repairs`).
+All 54 repository tests pass, and the builder self-check passes.
 Follow-up checks add normal identity completion, supplementary decision tests
 that cannot replace required guard tests, and three attempts within one deadline.
 
@@ -17,7 +19,7 @@ a route and validates canonical dates against the call's `now`. The generation
 rules cover completed identity recovery, exception priority during correction,
 returning after an offer of help, and persistent hardship context.
 
-The validator runs 22 independent checks over shared state. These cover valid
+Version 2 passed 22 independent checks over shared state. These cover valid
 recording and duplicate prevention; invalid offers followed by yes; stale
 readbacks; correction and fresh readback; negative/question replies; exceptions
 with corrections; failed/unknown writes; retry limits; and identity recovery.
@@ -25,6 +27,13 @@ It also checks graph guard paths, unreachable actions, unconditional action
 loops, secondary action guards, clearable speech fields, request bindings,
 variable aliases, and real-clock aliases. Its Python checks define a supported
 subset, not a general Python sandbox or proof of every business rule.
+
+Follow-up checks reject silent extraction consuming persuasion, and a relative's
+identity answer after earlier first-party confirmation. Six new spoken-date
+checks send month-name, ordinal, comma and case variants through the actual
+decision and verification request. The resolved answer must be the same valid
+ISO date; account and record actions remain denied. The unit fixture has 29
+independent checks; the total depends on the candidate's secondary actions.
 
 The test helper saves session, simulation, iteration and call IDs early. It
 keeps execution, result reading and scoring separate, accumulates owned version
@@ -67,17 +76,54 @@ start a simulation. Generated workflow files were not edited by hand.
 
 Each builder run has a separate limit of 30 minutes, including its test. Later
 development runs for repetitions and broader cases are outside that trace.
+Up to three generation attempts share that deadline; failed candidates are not
+published. Each repair keeps the same complete input files and validator errors.
+Follow-up repairs return a sparse JSON merge patch. The assembled full candidate
+still passes the same checks; raw patches and complete attempts are saved apart.
 
-## Pending Live Evidence
+Run `20261010T220403404639Z`, from clean commit `030cd23`, passed 95 local
+checks and Freya dry-run on its third candidate. It published version 2, verified
+readback with no changes and exported the workflow. The test started late in the
+run and its 30-minute budget ended before results arrived. A separate read-only
+resume recovered the official score without starting another simulation. That
+recovery does not make the original build complete within its deadline.
+
+| Run | Result | Time | Published / live test |
+| --- | --- | --- | --- |
+| `20261010T212235494756Z` | Local validation stopped | 763.28 s | Neither |
+| `20261010T214447691384Z` | Local validation stopped | 870.75 s | Neither |
+| `20261010T220403404639Z` | Budget ended during test | 1800.01 s | Version 2; recovered PUB-01 0/1 |
+
+## Live Evidence
 
 The stable slot currently identifies agent
 `404df3cd-803d-4656-89ac-ac122f9d31d2` and workflow
-`e14dbbfa-9fd9-4bb0-9a4e-882897366f8d`. Publication, tested version, readback,
-export, simulation IDs and official scores will be recorded here when known.
+`e14dbbfa-9fd9-4bb0-9a4e-882897366f8d`. Owned call metadata proves tested
+version 2. Its simulation is `593e7c3c-b38d-45a1-8d1d-bf42372a45db`, iteration
+`9af1e2e6-d6f3-4e02-abd9-4ed36eeed55a`, and call
+`4acedbfa-c26e-4559-9d8d-d3b1f837566a`.
 
-The gate is PUB-01 once, then three repetitions on the same published version,
-then the ten Brief A cases and focused correction/split-answer styles.
-String resets need actual platform evidence, not only dictionary checks.
+Results are in `build-the-builder/results/20261010T223110315886Z-404df3cd`.
+Trace and export are in `build-the-builder/out/20261010T220403404639Z`.
+The completed summary is 0 of 1 passing. Execution, result reads and official
+scoring finished. Only close_call reached the bank; no promise was recorded.
+The caller answered the birth-date question 79 times. Extraction produced fresh
+`D Month YYYY` strings, but the shared parser rejected that format and repeated
+the question. Local replay of the actual pre-decision state reproduced it.
+The fix requires parsing raw month-name dates in code, not trusting extraction
+to normalize plain strings. Follow-up diagnostics expose direct current decision
+fallbacks without copying raw identity speech into excerpts.
+
+The call shows plain-string speech resets worked: no schema-write rejection,
+failed extraction or unmatched route was found. Payment confirmation resets were
+not reached, so that part still needs live evidence. A wrapper path fix allows
+the documented repository-relative resume command; its regression covers resume
+and custom case paths.
+
+Version 2 failed the first gate, so no three-repeat or full Brief A claim is made.
+The next version must pass PUB-01 once, then three repetitions on the same
+published version, then all ten Brief A cases and correction/split-answer styles.
+Generated workflow files have not been edited by hand.
 
 Open scope: A+B and multiple products, a separate LLM controller, and aggressive
 history trimming. The current example bank key is used for this development
