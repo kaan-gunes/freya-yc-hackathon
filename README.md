@@ -21,6 +21,7 @@ Banka talimatları + OpenAPI → Builder → Freya'da telefon agentı → Test �
 7. [İlk builder incelemesi](research/builder-review-9046149.md) ve [ikinci geliştirme promptu](NEXT_DEVELOPMENT_PROMPT.md): canlı konuşma bulguları, doğrulama açıkları ve sıradaki düzeltmeler.
 8. [Mevcut işten sonraki prompt](AFTER_CURRENT_TASK_PROMPT.md): önce son sonucu kontrol ederek A kapsamı, A+B çoklu ürün ve küçük genelleme kontrollerine ilerler.
 9. [İkinci builder incelemesi](research/builder-review-6d324cd.md): v6'nın ölçülen sınırları, yeni onay/API/genelleme hataları ve güncel geliştirme önceliği.
+10. [Review sonrası tek tur düzeltme promptu](FOCUSED_FIX_PROMPT.md): sınırlı süre, tek builder çalışması ve ardından review için teslim; önceki geniş geliştirme promptunun yerine bu turda kullanılacak iş.
 
 ## Klasörler
 
