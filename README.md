@@ -26,8 +26,10 @@ Banka talimatları + OpenAPI → Builder → Freya'da telefon agentı → Test �
 12. [Sıradaki düzeltme ve canlı doğrulama promptu](NEXT_LIVE_VALIDATION_PROMPT.md): iki validator açığını kapat, bir builder çalıştırması ve aynı sürümde tek tam A testiyle teslim et.
 13. [Validator düzeltmeleri ve üretim blokajı incelemesi](research/builder-review-7d7dc3e.md): önceki iki açık kapandı; güvenli deadline readback'ini yanlış reddeden tarih testi üretimi engelliyor. Yeni canlı skor yok.
 14. [Previous deadline fix prompt](DEADLINE_FIX_PROMPT.md): local fix delivered; the build stopped before publish and live testing. See the latest review below for remaining work.
-15. [Latest independent build review](research/builder-review-4b637ea.md): deadline fix verified; two local validator mismatches still block the build. Diagnostic adjustments pass 176/176, with no new publish or live score.
-16. [Güncel validator uyumluluğu promptu](VALIDATOR_COMPAT_FIX_PROMPT.md): iki kök nedeni düzelt, güvenlik kontrollerini koru; tek build ve yayımlanan aynı sürümde PUB-01/tam A sonucuyla teslim et.
+15. [Önceki build review'u](research/builder-review-4b637ea.md): deadline düzeltmesi ve iki validator uyumsuzluğunun teşhisi.
+16. [Önceki validator uyumluluğu promptu](VALIDATOR_COMPAT_FIX_PROMPT.md): düzeltmeler teslim edildi; yeni build eksik workflow'da durdu.
+17. [Son bağımsız review](research/builder-review-f80b9c1.md): 19 test geçti; aynı girdili tam eski aday 179/179, son üretim eksik. Yeni canlı skor yok.
+18. [Güncel zaman kritik prompt](VALIDATED_CANDIDATE_RESUME_PROMPT.md): aynı kaynaklı tam adaydan builder üzerinden devam et; yeni sürümde tek PUB-01/tam A sonucunu al.
 
 ## Klasörler
 
