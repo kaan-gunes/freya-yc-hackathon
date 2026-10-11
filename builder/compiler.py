@@ -34,7 +34,10 @@ def _kaan_clear_confirmation(text):
     action = rf'(?:please )?(?:go ahead and )?(?:record|save|register) (?:it|this|that|{objects})(?: for (?:that|this|the) amount and date)?'
     polite = r'(?:please|thanks|thank you(?: very much)?|go ahead|no problem)'
     # shortcut: unfamiliar consent wording asks again; expand only with observed safe replies.
-    numeric = r'[0-9]+(?:[.,][0-9]+)?(?: dollars| euros| pounds)? on [a-z0-9 /-]+'
+    month = r'(?:january|february|march|april|may|june|july|august|september|october|november|december)'
+    day = r'[0-9]{1,2}(?:st|nd|rd|th)?'
+    date = rf'(?:today|tomorrow|(?:next |this )?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)|{month} {day}(?:,? [0-9]{{4}})?|{day} (?:of )?{month}(?:,? [0-9]{{4}})?|[0-9]{{4}}-[0-9]{{1,2}}-[0-9]{{1,2}}|[0-9]{{1,2}}/[0-9]{{1,2}}(?:/[0-9]{{2,4}})?)'
+    numeric = rf'[0-9]+(?:[.,][0-9]+)?(?: dollars| euros| pounds)? on {date}'
     clause = rf'(?:{assent}|{action}|i can pay {objects}|use {objects}|{polite}|{numeric})'
     return bool(re.fullmatch(rf'{assent}(?:[,.!; ]+{clause})*', text))
 

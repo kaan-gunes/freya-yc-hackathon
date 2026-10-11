@@ -27,6 +27,8 @@ class CompilerIntentChecks(unittest.TestCase):
             "Yes, I confirm the amount, the date is wrong.",
             "I agree with the amount only.",
             "Yes, I can pay that amount if I get paid.",
+            "Yes, 600 on October 16th I cannot afford it.",
+            "Yes, 600 on October 16th I have not agreed.",
         ):
             with self.subTest(text=text):
                 self.assertFalse(_kaan_clear_confirmation(text))

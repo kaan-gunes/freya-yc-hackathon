@@ -32,8 +32,9 @@ Banka talimatları + OpenAPI → Builder → Freya'da telefon agentı → Test �
 18. [Önceki devam promptu](VALIDATED_CANDIDATE_RESUME_PROMPT.md): aynı kaynaklı adaydan devam yolu teslim edildi; v7 yayımlandı.
 19. [V7 canlı sonucu review'u](research/builder-review-650dcbe.md): resume kodu kabul; mevcut v7 4/10 ve banka 7/10 yeniden doğrulandı.
 20. [Önceki v7 konuşma düzeltme promptu](V7_CONVERSATION_FIX_PROMPT.md): yerel düzeltmeler teslim edildi; offline aday dört kontrolde kaldı.
-21. [Son bağımsız review](research/builder-review-e655ed7.md): 57 test geçti; gerçek aday 203/207, kalan niyet ayrımı ve iki eksik ret yazımı doğrulandı. Yeni canlı skor yok.
-22. [Güncel dar niyet-onarım promptu](CURRENT_INTENT_REPAIR_PROMPT.md): kalan karar ayrımını tamamla; aynı son taslaktan tek offline repair ile geçerli aday teslim et.
+21. [Önceki bağımsız review](research/builder-review-e655ed7.md): 57 test geçti; o aday 203/207'de kaldı, niyet hataları doğrulandı.
+22. [Önceki niyet-onarım promptu](CURRENT_INTENT_REPAIR_PROMPT.md) ve [Claude sonucu](research/current-intent-repair-result.md): niyet düzeldi; 214/214 aday üç graf kapısında reddedildi.
+23. **[Güncel calls incelemesi ve Kaan compiler sonucu](research/kaan-compiler-result.md):** prompt yerine kod geliştirildi. Kaynak kontrollü onay dönüşü ve güncel onay kapısı; gerçek builder ile model çağırmadan **232/232**, provenance **47/47**, graf geçerli. Yeni canlı skor yok.
 
 ## Klasörler
 
