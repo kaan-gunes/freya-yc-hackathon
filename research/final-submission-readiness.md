@@ -4,6 +4,8 @@ Resmî canlı sayfa incelendi. **38 dakika, teslimin kapanmasına değil final b
 
 **20:45 güncellemesi:** Güncel Drive BRIEF'i, README ve diğer 16 kaynak dosya okundu. Downloads'taki ilk brief yerine güncel dondurulmuş Drive kopyası kullanılır. Teslim alıcısı **yavuz@freyavoice.ai**; üç ek: submission.json, resmî workflow export'u ve builder'ın gerçek agent session logu. Gönderimden önce kullanıcıya durum anlatılıp onay sorulacak. Genel giriş hattı ve mock tamam: Worker yayımlı, 617/617 gerçek HTTP fixture karşılaştırması geçti. Yeni inbound hizmet profilinin bağımsız güvenlik kontrolleri sürüyor; final agent henüz üretilmedi. Aşağıdaki eksik tablosu **19:25 tarihsel incelemesidir**. İlk saat yeni belgeleri 21:00'den sonra ayrıca kontrol edilecek. [Güncel final çalışma kaydı](final-entry-result.md).
 
+**21:03 güncellemesi:** İlk saat Drive recheck tamamlandı: yeni Oct10 toplantı kaydıyla **19 dosyalık** ayrı snapshot son üretim girdisidir; eski 18 dosyanın hash'i aynı. Genel profile güvenlik/allOf review'u ve 83 birleşik test geçti. İki ilk koşu agent/publish öncesi durdu; yeni temiz koşu yapılacak. Paket hazır olmadan gönderim onayı istenmez; e-posta henüz gönderilmedi.
+
 ## Kesin takvim ve teslim
 
 | Aşama | 11 Ekim Pazar, İstanbul | UTC |

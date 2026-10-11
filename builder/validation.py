@@ -1711,7 +1711,27 @@ def _service_types(schema, document):
     for key in ('anyOf', 'oneOf'):
         for choice in schema.get(key, []):
             types.update(_service_types(choice, document))
+    for choice in schema.get('allOf', []):
+        choice_types = _service_types(choice, document)
+        if choice_types:
+            intersection = types & choice_types
+            if not intersection and ('number' in types and 'integer' in choice_types or 'integer' in types and 'number' in choice_types):
+                intersection = {'integer'}
+            types = intersection if types else choice_types
     return types
+
+
+def _service_properties(schema, document):
+    """Keep the intersection of allOf constraints when traversing body fields."""
+    schema = _resolve(schema, document)
+    properties = dict(schema.get('properties', {}))
+    required = set(schema.get('required', []))
+    for choice in schema.get('allOf', []):
+        fields, demanded = _service_properties(choice, document)
+        required.update(demanded)
+        for name, child in fields.items():
+            properties[name] = {'allOf': [properties[name], child]} if name in properties else child
+    return properties, required
 
 
 def _service_body(properties, state):
@@ -2040,7 +2060,8 @@ def _validate_service(workflow, policy, openapi, checks, brief_lines):
                 response = _resolve(response_codes.get(str(status), {}), openapi)
                 schema = response.get('content', {}).get('application/json', {}).get('schema', {})
                 for part in path[5:].split('.'):
-                    schema = _resolve(schema, openapi).get('properties', {}).get(part, {})
+                    fields, _ = _service_properties(schema, openapi)
+                    schema = fields.get(part, {})
                 if not schema:
                     return False
             return True
@@ -2195,10 +2216,11 @@ def _validate_service(workflow, policy, openapi, checks, brief_lines):
             operation = operations[api_nodes[node]][3]
             def response_fields(schema, path=()):
                 schema = _resolve(schema, openapi)
-                for field, child in schema.get('properties', {}).items():
+                fields, required = _service_properties(schema, openapi)
+                for field, child in fields.items():
                     child = _resolve(child, openapi)
                     child_path = (*path, field)
-                    yield child_path, child, field in schema.get('required', [])
+                    yield child_path, child, field in required
                     yield from response_fields(child, child_path)
             response = _resolve(operation.get('responses', {}).get(str(success.get('status_code')), {}), openapi)
             source_schema = _service_schema_definition(response.get('content', {}).get('application/json', {}).get('schema', {}), openapi)

@@ -3,7 +3,7 @@ import copy
 import inspect
 import unittest
 
-from builder.compiler import _service_clear_confirmation, compile_candidate
+from builder.compiler import _service_clear_confirmation, _service_matches_schema, compile_candidate
 from builder.validation import _parse, _run_check, validate
 
 
@@ -110,6 +110,29 @@ def compiled_report(value):
 
 
 class ServiceWorkflowTests(unittest.TestCase):
+    def test_allof_keeps_shared_required_fields_types_and_enum_constraints(self):
+        value = candidate()
+        operation = value['openapi']['paths']['/items']['post']
+        original = operation['responses']['200']['content']['application/json']['schema']
+        value['openapi']['components'] = {'schemas': {'SharedResult': original}}
+        operation['responses']['200']['content']['application/json']['schema'] = {
+            'allOf': [{'$ref': '#/components/schemas/SharedResult'}, {'type': 'object', 'required': ['progress'],
+                       'properties': {'progress': {'type': 'string', 'enum': ['READY']}, 'state': {'enum': ['committed']}}}]}
+        value['policy']['security']['api_results']['action']['success_result']['data']['progress'] = 'READY'
+        value['checks'][0]['vars']['action_response.data']['progress'] = 'READY'
+        compiled, _, report = compiled_report(value)
+        self.assertTrue(report['ok'], report['errors'])
+        code = compiled['workflow']['nodes']['result']['pre_actions'][0]['function']['parameters']['properties']['code']['default']
+        for body in ({'receipt': 'synthetic', 'state': 'committed', 'progress': 'WAIT'},
+                     {'receipt': 'synthetic', 'state': 'committed'},
+                     {'state': 'committed', 'progress': 'READY'},
+                     {'receipt': [], 'state': 'committed', 'progress': 'READY'}):
+            _run_check(code, {'vars': {'action_response.status_code': 200, 'action_response.data': body},
+                              'expected': {'current_success': '', 'speech': 'İşlem tamamlanmadı.'}})
+        self.assertFalse(_service_matches_schema({'code': 9}, {'allOf': [
+            {'type': 'object', 'required': ['code'], 'properties': {'code': {'type': 'integer'}}},
+            {'properties': {'code': {'enum': [0]}}}]}))
+
     def test_confirmed_service_passes_independent_guards_and_nested_requests(self):
         compiled, changes, report = compiled_report(candidate())
         self.assertTrue(report['ok'], report['errors'])

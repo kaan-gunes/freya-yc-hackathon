@@ -163,6 +163,8 @@ def _service_request_text(text):
 def _service_matches_schema(value, schema):
     if value is None and schema.get('nullable'):
         return True
+    if not all(_service_matches_schema(value, choice) for choice in schema.get('allOf', [])):
+        return False
     for key in ('anyOf', 'oneOf'):
         if schema.get(key) and not any(_service_matches_schema(value, choice) for choice in schema[key]):
             return False
