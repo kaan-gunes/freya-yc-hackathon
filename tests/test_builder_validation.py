@@ -107,6 +107,8 @@ def spoken_dob(raw):
             raise ValueError('complete named-month date required')
         month_text, day_text, year_text = match.groups()
     day_number = int(day_text) if day_text.isdigit() else days.get(day_text)
+    if day_number is None:
+        day_number = small_number(day_text)
     year_number = spoken_year(year_text)
     if day_number is None or year_number is None:
         raise ValueError('complete day and year required')
@@ -144,6 +146,9 @@ elif party == 'confirmed' and answer and event == 'yes':
         clean = re.sub(r'[._]+$', '', answer.strip().lower()).strip()
         if vars.get('stage') == 'identity_phone':
             clean = re.sub(r'^(my last four digits are|my verification code is)\s+', '', clean)
+            code_words = clean.replace(',', ' ').replace('-', ' ').split()
+            if code_words and all(word in small[:10] for word in code_words):
+                clean = ''.join(str(small.index(word)) for word in code_words)
             if re.fullmatch(r'[0-9]{' + str(int(vars.get('code_length', 4))) + '}', clean):
                 vars['verification_answer'] = clean
                 vars['verification_question'] = 'phone_last4'
@@ -899,6 +904,32 @@ class ValidationTests(unittest.TestCase):
         self.assertTrue(all(not check["ok"] for check in word_checks), report)
         self.assert_rejected(arguments, "complete spoken identity date did not reach a verification API action")
 
+    def test_cardinal_word_days_reach_verify_on_both_identity_inputs(self):
+        arguments = candidate()
+        report = validate(*arguments)
+        self.assertTrue(report["ok"], report)
+        checks = [check for check in report["checks"] if check["name"].startswith("independent_identity_cardinal_day_")]
+        self.assertEqual(len(checks), 2)
+        self.assertTrue(all(check["ok"] for check in checks), report)
+        for date in ("1990-04-01", "2004-02-29", "1905-11-21"):
+            with self.subTest(date=date):
+                arguments[1]["security"]["validation_identity_answer_fixture"]["speech_answer"] = date
+                self.assertTrue(validate(*arguments)["ok"])
+
+    def test_cardinal_day_checks_catch_ordinal_only_parser(self):
+        arguments = candidate()
+        code = arguments[0]["nodes"]["decision"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]
+        original = "    if day_number is None:\n        day_number = small_number(day_text)\n"
+        self.assertIn(original, code["default"])
+        code["default"] = code["default"].replace(original, "")
+        report = validate(*arguments)
+        ordinal_checks = [check for check in report["checks"] if check["name"].startswith("independent_identity_word_date_")]
+        self.assertEqual(len(ordinal_checks), 8)
+        self.assertTrue(all(check["ok"] for check in ordinal_checks), report)
+        checks = [check for check in report["checks"] if check["name"].startswith("independent_identity_cardinal_day_")]
+        self.assertEqual(len(checks), 2)
+        self.assertTrue(all(not check["ok"] for check in checks), report)
+
     def test_missing_spoken_identity_year_cannot_use_cached_year_or_answer(self):
         arguments = candidate()
         code = arguments[0]["nodes"]["decision"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]
@@ -968,6 +999,66 @@ class ValidationTests(unittest.TestCase):
                 report = validate(*arguments)
                 self.assertTrue(all(check["ok"] for check in report["checks"] if check["name"].startswith("independent_identity_date_words_") or check["name"] == "independent_identity_date_in_main_date"), report)
                 self.assert_rejected(arguments, reason)
+
+    def test_complete_digit_word_identity_codes_reach_the_real_request(self):
+        arguments = candidate()
+        report = validate(*arguments)
+        self.assertTrue(report["ok"], report)
+        word_checks = [check for check in report["checks"] if check["name"].startswith("independent_identity_code_words_")]
+        self.assertEqual(len(word_checks), 6)
+        self.assertTrue(all(check["ok"] for check in word_checks), report)
+        code = arguments[0]["nodes"]["decision"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]["default"]
+        for role in ("speech_answer", "speech_text"):
+            for speech in ("zero zero one four", "zero, zero, one, four", "zero-zero-one-four"):
+                with self.subTest(role=role, speech=speech):
+                    state = dict(arguments[1]["security"]["validation_identity_code_fixture"], speech_text="")
+                    state[role] = speech
+                    _run_check(code, {"vars": state, "expected": {"verification_answer": "0014", "verification_question": "phone_last4", "route": "verify", "bank_status": "unverified", "speech_answer": "", "speech_text": ""}})
+
+    def test_digit_word_code_checks_catch_numeric_only_parser(self):
+        arguments = candidate()
+        code = arguments[0]["nodes"]["decision"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]
+        original = "            if code_words and all(word in small[:10] for word in code_words):"
+        self.assertIn(original, code["default"])
+        code["default"] = code["default"].replace(original, "            if False:")
+        report = validate(*arguments)
+        numeric_checks = [check for check in report["checks"] if check["name"].startswith("independent_identity_code_in_speech_text_")]
+        self.assertEqual(len(numeric_checks), 2)
+        self.assertTrue(all(check["ok"] for check in numeric_checks), report)
+        word_checks = [check for check in report["checks"] if check["name"].startswith("independent_identity_code_words_")]
+        self.assertEqual(len(word_checks), 6)
+        self.assertTrue(all(not check["ok"] for check in word_checks), report)
+
+    def test_digit_word_codes_need_complete_current_input(self):
+        arguments = candidate()
+        code = arguments[0]["nodes"]["decision"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]["default"]
+        for role in ("speech_answer", "speech_text"):
+            for speech in ("", "zero zero", "zero zero one four five", "I think zero zero one four", "zero zero one four after lunch"):
+                with self.subTest(role=role, speech=speech):
+                    state = dict(arguments[1]["security"]["validation_identity_code_fixture"], speech_text="", verification_answer="0014")
+                    state[role] = speech
+                    _run_check(code, {"vars": state, "expected": {"route": "listen", "bank_status": "unverified", "record_authorization": "", "speech_answer": "", "speech_text": ""}})
+        state = dict(arguments[1]["security"]["validation_identity_code_fixture"], speech_text="zero zero one four", speech_event="")
+        _run_check(code, {"vars": state, "expected": {"route": "listen", "bank_status": "unverified", "speech_text": ""}})
+
+    def test_partial_digit_word_codes_cannot_fill_a_missing_zero_or_use_cached_answer(self):
+        arguments = candidate()
+        report = validate(*arguments)
+        self.assertTrue(report["ok"], report)
+        partial = [check for check in report["checks"] if check["name"].startswith("independent_partial_identity_code_words_")]
+        self.assertEqual(len(partial), 2)
+        self.assertTrue(all(check["ok"] for check in partial), report)
+        code = arguments[0]["nodes"]["decision"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]
+        original = "                clean = ''.join(str(small.index(word)) for word in code_words)"
+        self.assertIn(original, code["default"])
+        code["default"] = code["default"].replace(original, original + "\n                clean = clean.zfill(int(vars.get('code_length', 4)))")
+        report = validate(*arguments)
+        complete = [check for check in report["checks"] if check["name"].startswith(("independent_identity_code_words_", "independent_identity_code_in_speech_text_"))]
+        self.assertEqual(len(complete), 8)
+        self.assertTrue(all(check["ok"] for check in complete), report)
+        partial = [check for check in report["checks"] if check["name"].startswith("independent_partial_identity_code_words_")]
+        self.assertEqual(len(partial), 2)
+        self.assertTrue(all(not check["ok"] for check in partial), report)
 
     def test_full_text_identity_still_needs_an_answer_event_and_no_stale_code(self):
         for fault, reason in (

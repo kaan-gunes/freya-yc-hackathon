@@ -938,6 +938,9 @@ def _independent_checks(nodes, snippets, security, checks):
     ):
         for role, input_label in (("identity_answer", "answer"), ("speech_text", "speech_text")):
             run(f"independent_identity_word_date_{input_label}_{label}", lambda raw=raw, expected=expected, role=role: identity_request_boundary(current_identity_state(identity_answer_fixture, roles[role], raw), expected, identity_request_context, "date"))
+    cardinal_day = f"{small_number_words(day.day)} {month} {grouped_year}"
+    for role, label in (("identity_answer", "answer"), ("speech_text", "speech_text")):
+        run(f"independent_identity_cardinal_day_{label}", lambda role=role: identity_request_boundary(current_identity_state(identity_answer_fixture, roles[role], cardinal_day), day.isoformat(), identity_request_context, "date"))
 
     def missing_identity_year(role, raw=None):
         state = current_identity_state(identity_answer_fixture, roles[role], raw if raw is not None else f"the {ordinal_day} of {month}.")
@@ -961,9 +964,15 @@ def _independent_checks(nodes, snippets, security, checks):
     code_prefix = "My last four digits are" if len(canonical_identity_code) == 4 else "My verification code is"
     for label, speech in (("period", canonical_identity_code + "."), ("prefix", code_prefix + " " + canonical_identity_code + ".")):
         run(f"independent_identity_code_in_speech_text_{label}", lambda speech=speech: identity_request_boundary(current_identity_state(identity_code_fixture, roles["speech_text"], speech), canonical_identity_code, identity_code_context, "code"))
+    code_words = [small_words[int(digit)] for digit in canonical_identity_code]
+    for label, separator in (("space", " "), ("comma", ", "), ("hyphen", "-")):
+        speech = separator.join(code_words)
+        for role, input_label in (("identity_answer", "answer"), ("speech_text", "speech_text")):
+            run(f"independent_identity_code_words_{input_label}_{label}", lambda speech=speech, role=role: identity_request_boundary(current_identity_state(identity_code_fixture, roles[role], speech), canonical_identity_code, identity_code_context, "code"))
 
-    def missing_identity_speech(input_fixture=identity_answer_fixture, cached_answer=canonical_identity_answer):
+    def missing_identity_speech(input_fixture=identity_answer_fixture, cached_answer=canonical_identity_answer, partial_code_field=None):
         state = identity_state(input_fixture)
+        event = state.get(roles["decision_event"], "")
         for _, tool in verification_requests:
             field = tool.get("function", {}).get("parameters", {}).get("properties", {}).get("body", {}).get("properties", {}).get(answer_request_field, {})
             value = field.get("default")
@@ -972,6 +981,9 @@ def _independent_checks(nodes, snippets, security, checks):
                 state[placeholder.group(1)] = cached_answer
         for field in decision_inputs:
             state[field] = ""
+        if partial_code_field:
+            state[roles["decision_event"]] = event
+            state[partial_code_field] = " ".join(code_words[:-1])
         state[security.get("bank_verification_variable")] = "unverified"
         state[roles["party_confirmation"]] = party_confirmed
         state[authorization] = ""
@@ -982,6 +994,8 @@ def _independent_checks(nodes, snippets, security, checks):
             raise ValueError("missing identity speech must return to a real listener without a bank action")
     run("independent_missing_identity_speech", missing_identity_speech)
     run("independent_missing_identity_code_speech", lambda: missing_identity_speech(identity_code_fixture, canonical_identity_code))
+    for role, label in (("identity_answer", "answer"), ("speech_text", "speech_text")):
+        run(f"independent_partial_identity_code_words_{label}", lambda role=role: missing_identity_speech(identity_code_fixture, canonical_identity_code, roles[role]))
 
     def inactive_identity_event(input_fixture, speech, event):
         state = current_identity_state(input_fixture, roles["speech_text"], speech)

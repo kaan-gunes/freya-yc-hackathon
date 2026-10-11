@@ -165,8 +165,11 @@ unknown, question or exception event cannot use raw text to start verification.
 Trim bounded surrounding whitespace and sentence punctuation (including '.' and
 '._') before exact parsing. Accept a simple answer prefix for the pending
 question, such as "My date of birth is" or "My last four digits are"; do not search
-arbitrary prose for digits. Preserve leading zeros in numeric security codes and
-check their sourced length. A DOB needs an explicit complete year, but that year
+arbitrary prose for digits. For numeric security codes, accept a complete sequence
+of zero-to-nine digit words separated by spaces, commas or hyphens, as well as
+contiguous digits. Map each stated digit once, preserve leading zeros and check
+the sourced length; never zero-pad, infer missing digits or collect unrelated
+prose. A DOB needs an explicit complete year, but that year
 may be spoken in words; do not require four raw digits after a successful word
 parse. Never supply today's year for a partial DOB. Parsing failures never count
 as bank rejections.
@@ -412,8 +415,9 @@ them. The shared date parser also accepts English month names in day-first and
 month-first order, with case differences, commas and ordinal days, such as
 "14 March 1988", "March 14th, 1988" and "14th march, 1988". Use explicit month
 names and datetime.date, without locale-dependent parsing or new dependencies.
-For complete spoken DOBs, also accept a bounded English grammar: ordinal day
-words (first through thirty-first), optional "the"/"of", a named month, and a
+For complete spoken DOBs, also accept a bounded English grammar: cardinal day
+words (one through thirty-one) or ordinal day words (first through thirty-first),
+optional "the"/"of", a named month, and a
 complete grouped year ("nineteen ninety") or cardinal year ("one thousand nine
 hundred and ninety"). Treat hyphens as word separators. Match the whole answer,
 validate with datetime.date and return the canonical ISO date. This is a small
@@ -515,6 +519,8 @@ property and operand; the date must not be sent to a different security question
 Add a generated regression for this path as well as split identity answers.
 The builder also tests complete word-day/word-year DOBs through both the raw
 identity answer and full speech text, including optional words and hyphens.
+Complete cardinal-day birth dates also reach the pending date question;
+only the bank decides whether the supplied date is right or wrong.
 The paired missing-year probes must return to a listener without verification;
 all other current speech is cleared, so no alternate field can hide a failure.
 Independent payment probes also send weekday-plus-ordinal dates through the
@@ -536,6 +542,8 @@ request context. Raw-text-only "0014." and "My last four digits are 0014." must
 send unchanged digits to that question, not a date. The digits are fixture data,
 not policy; use the input's real format. Blanking all current speech must never
 send a cached code. Add generated regressions for both raw-text-only paths.
+Independent code-word checks use the same complete fixture through identity_answer
+and raw-text-only speech_text, preserving its numeric answer and pending question.
 Map decision_amount to the actual distinct untrusted main amount input consumed
 and cleared by decision code, and full_amount to the trusted current bank-derived
 full amount read there. The valid offer fixture includes that numeric bank fact.
