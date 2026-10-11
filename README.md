@@ -10,6 +10,8 @@ Banka talimatları + OpenAPI → Builder → Freya'da telefon agentı → Test �
 
 ## Önce bunları okuyun
 
+**Yeni chat veya review için:** [Proje bağlamı ve devir notu](PROJECT_CONTEXT.md), ana fikri, alınan kararları ve son incelenen durumu bir araya getirir.
+
 1. [Starter kit README](build-the-builder/README.md): resmî başlangıç ve yarışma kuralları.
 2. [Freya workspace'ini kullanma](research/workspace-kullanimi.md): ortak çalışmayı basitçe anlatır.
 3. [Araştırma özeti](research/hackathon-arastirmasi.md): görev, puanlama ve geliştirme önerileri.
@@ -17,6 +19,7 @@ Banka talimatları + OpenAPI → Builder → Freya'da telefon agentı → Test �
 5. [Test akışı](research/test-akisi.md): test komutları ve hata bildirim biçimi.
 6. [İlk geliştirme promptu](DEVELOPMENT_PROMPT.md): kodlama agentına verilecek mimari, geliştirme sırası ve ilk sürüm beklentileri.
 7. [İlk builder incelemesi](research/builder-review-9046149.md) ve [ikinci geliştirme promptu](NEXT_DEVELOPMENT_PROMPT.md): canlı konuşma bulguları, doğrulama açıkları ve sıradaki düzeltmeler.
+8. [Mevcut işten sonraki prompt](AFTER_CURRENT_TASK_PROMPT.md): önce son sonucu kontrol ederek A kapsamı, A+B çoklu ürün ve küçük genelleme kontrollerine ilerler.
 
 ## Klasörler
 
