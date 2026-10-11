@@ -681,6 +681,12 @@ def main():
                 raise ValueError("Repair seed must be a complete candidate.")
             manifest["compile_seed" if args.compile_build else "repair_seed"] = seed
             event("candidate_seeded_for_compilation" if args.compile_build else "candidate_seeded_for_model_repair", **seed)
+            seed_trace = (args.repair_build or args.compile_build) / "trace.jsonl"
+            if seed_trace.exists():
+                event("seed_trace_begin", path=str(seed_trace), sha256=hashlib.sha256(seed_trace.read_bytes()).hexdigest())
+                with trace.open("a") as handle:
+                    handle.write(redact(seed_trace.read_text()) + "\n")
+                event("seed_trace_end", path=str(seed_trace))
             if args.mock_url:
                 candidate, validation_openapi, _ = bind_mock(candidate, openapi, args.mock_url)
             else:
@@ -712,6 +718,12 @@ def main():
             reuse, raw_text = resume_candidate(args.resume_build, sources, slot, mock_url=args.mock_url)
             manifest["resume_build"] = reuse
             event("candidate_reused", **reuse)
+            seed_trace = args.resume_build / "trace.jsonl"
+            if seed_trace.exists():
+                event("seed_trace_begin", path=str(seed_trace), sha256=hashlib.sha256(seed_trace.read_bytes()).hexdigest())
+                with trace.open("a") as handle:
+                    handle.write(redact(seed_trace.read_text()) + "\n")
+                event("seed_trace_end", path=str(seed_trace))
             print("Revalidating the saved candidate; no model generation or repair.", flush=True)
         for attempt in ((1,) if args.resume_build or args.repair_build or args.compile_build else (1, 2, 3)):
             output_format = "compiled_candidate" if args.compile_build else "merge_patch" if draft_candidate is not None else "full_candidate"
