@@ -257,6 +257,8 @@ class FinalRunnerChecks(unittest.TestCase):
                 self.assertIn("Request model and Called-with description define its mandatory service inputs", generated[0])
                 self.assertIn("Apply explicit optional/ignored-field exceptions", generated[0])
                 self.assertIn("required fields with enums", generated[0])
+                self.assertIn("ignored field value is not permission to omit a field", generated[0])
+                self.assertIn("exact empty-object enum alternative", generated[0])
                 self.assertIn("inferred_schema_sha256", manifest)
                 self.assertTrue((folder / "contract-evidence.json").exists())
             else:
