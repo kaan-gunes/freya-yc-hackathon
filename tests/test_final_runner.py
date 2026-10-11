@@ -157,6 +157,9 @@ class FinalRunnerChecks(unittest.TestCase):
     def test_final_refuses_overwriting_delivery(self):
         self.run_final("delivery")
 
+    def test_service_state_specification_reports_all_output_shape_errors(self):
+        self.run_final("shape")
+
     def run_final(self, failure=None, prose=False):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
@@ -179,6 +182,11 @@ class FinalRunnerChecks(unittest.TestCase):
                 candidate["policy"].update(workflow_kind="service", source_rules=[{
                     "source": str(brief), "line": 1, "text": brief.read_text().strip()}])
                 candidate["workflow"]["nodes"]["action"]["pre_actions"] = [api_tool(target + "/source_action")]
+            if failure == "shape":
+                candidate["policy"]["workflow_kind"] = "service"
+                candidate["workflow"] = {"states": {"read": "prose"}, "executable": False}
+                candidate["uncertainties"] = [{"note": "External fact unknown"}]
+                candidate["checks"] = [{"expected": "Prose acceptance"}]
             expected, _, _ = runner.bind_mock(candidate, contract, target)
             generated = []
 
@@ -243,6 +251,11 @@ class FinalRunnerChecks(unittest.TestCase):
                 if failure in ("local", "delivery"):
                     dry_run.assert_not_called()
                 self.assertFalse((delivery / "export.workflow.json").exists())
+                if failure == "shape":
+                    errors = json.loads((folder / "validation-attempt-1.json").read_text())["errors"]
+                    self.assertIn("workflow.nodes", errors[0])
+                    self.assertIn("uncertainties", errors[0])
+                    self.assertIn("Service checks", errors[0])
                 if failure == "delivery":
                     self.assertEqual((delivery / "manifest.json").read_text(), "Do not overwrite")
                 return

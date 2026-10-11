@@ -26,6 +26,11 @@ Set `policy.workflow_kind="service"`. Policy contains atomic source rules
 line. Cover all actual business requirements, not deployment checklist numbers.
 Retain replaced requirements and explain the supplied authority for replacement.
 Include `policy.unsupported=[]` only when every source requirement is implemented.
+Distinguish unavailable external facts from missing builder implementation.
+A source's unanswered fact has a safe runtime branch using its documented
+fallback and a string uncertainty; it must not turn the entire output into a
+state specification. Do not invent the fact or claim an unavailable physical
+integration works. Implement the executable branches whose source facts exist.
 Include sourced speech and API bindings, and `policy.service_operations`:
 `{actualOperationId:{effect:"read"|"write"|"transfer",source_rule:ruleID}}`.
 A POST lookup or validation/preview can still be a read. Classify actual side

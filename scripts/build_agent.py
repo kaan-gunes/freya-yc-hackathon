@@ -626,6 +626,16 @@ def main():
         manifest["input_reader_source"] = source(ROOT / "builder/inputs.py")[0]
         if (ROOT / "builder/language.py").exists():
             manifest["language_source"] = source(ROOT / "builder/language.py")[0]
+        prompt += ("\n=== FINAL OUTPUT CONTRACT ===\n"
+                   "Return an EXECUTABLE Freya candidate, not a design or state specification. "
+                   "workflow must contain initial_node and nodes using the supplied engine format and real code/API handlers. "
+                   "policy must include the chosen profile's actual runtime/security bindings. "
+                   "checks must be runnable {name,node_id,vars,expected} objects, not acceptance prose. "
+                   "uncertainties must be a list of strings; summary must be a string. "
+                   "Never return executable:false, workflow.states, partial artifacts, or prose instead of node code. "
+                   "An unspecified external fact must be isolated in its affected runtime decision with a truthful documented fallback; it does not justify replacing the executable workflow with a report. "
+                   "Do not invent that missing fact, service endpoint or a physical integration. Use only the complete supplied sources for business rules.\n")
+        (folder / "input-prompt.txt").write_text(redact(prompt))
         model_prompt, all_events, candidate, draft_candidate = prompt, [], None, None
         if args.repair_build or args.compile_build:
             lock = (KIT / ".builder.lock").open("a")
@@ -701,8 +711,20 @@ def main():
                     raw = merge_patch(draft_candidate, raw)
                 if not isinstance(raw, dict) or set(raw) != {"policy", "workflow", "checks", "uncertainties", "summary"}:
                     raise ValueError("Model result must contain exactly policy/workflow/checks/uncertainties/summary.")
+                shape_errors = []
+                if not isinstance(raw["policy"], dict):
+                    shape_errors.append("Model policy must be an object.")
                 if not isinstance(raw["uncertainties"], list) or any(not isinstance(item, str) for item in raw["uncertainties"]) or not isinstance(raw["summary"], str):
-                    raise ValueError("Model uncertainties must be a string list and summary must be a string.")
+                    shape_errors.append("Model uncertainties must be a string list and summary must be a string.")
+                if not isinstance(raw["workflow"], dict) or not isinstance(raw["workflow"].get("nodes"), dict):
+                    shape_errors.append("workflow.nodes must contain executable Freya nodes; state specifications are not a workflow.")
+                if isinstance(raw["policy"], dict) and raw["policy"].get("workflow_kind") == "service" and (not isinstance(raw["checks"], list) or any(
+                        not isinstance(check, dict) or not isinstance(check.get("node_id"), str)
+                        or not isinstance(check.get("vars"), dict) or not isinstance(check.get("expected"), dict)
+                        for check in raw["checks"])):
+                    shape_errors.append("Service checks must be runnable node_id/vars/expected objects, not acceptance prose.")
+                if shape_errors:
+                    raise ValueError(" ".join(shape_errors))
                 draft_candidate = copy.deepcopy(raw)
                 if not args.resume_build:
                     raw, changes = (compile_candidate(raw, openapi) if raw["policy"].get("workflow_kind") == "service"
