@@ -1,0 +1,19 @@
+# Tarih kontrolünü düzelt, tek üretim ve canlı testle teslim et
+
+Son review tamamlandı. Önceki kimlik override ve retry düzeltmeleri çalışıyor. Şimdi hedefimiz tarih kontrolündeki yanlış reddi kapatmak ve yeni agentın gerçek sonucunu görmek. Doğrudan başla; rutin teknik kararları kendin ver, küçük ve anlaşılır çözümle hızlı teslim et.
+
+Ekip değişikliklerini ezmeden güncel repo durumunu kontrol et. `PROJECT_CONTEXT.md`, `research/builder-review-7d7dc3e.md` ve `research/validator-fix-live-result.md` dosyalarını oku. Review edilen uygulama `bd2bb29`; review commit'i `414e19b`. Starter skill `build-the-builder/.claude/skills/build-phone-agent/SKILL.md` ve ihtiyaç duyduğun brief/API bölümlerini kullan. Eski görev promptları yerine bu görevin kapsamını izle.
+
+**Düzeltilecek sorun:** `builder/validation.py` içindeki `unmarked_correction`, fixture tarihine bir gün ekliyor ve yeni readback fingerprint'inin eskisinden farklı olmasını istiyor. İlk teklif zaten son tarihteyse müşteri daha geç gün istediğinde Brief A kural 23 gereği son tarih yeniden teklif edilir. Eski yetki temizlenip gerçek confirmation node'unda yeniden onay istense bile ürün/tutar/tarih aynı kaldığı için validator güvenli adayı reddediyor. Son build bu iki date-correction probe'unda durmuş.
+
+Yeniden okunmuş teklif ile değişmiş teklif değerini birbirinden ayır. Yeni günün her zaman izinli olduğunu varsayma. Uygun farklı tarihe düzeltmeyi ve deadline'a geri dönülüp aynı değerlerin yeniden okunmasını anlamlı regresyonlarla kapsa. Correction marker boş/yanlışken de eski onay silinmeli, teklif yeniden doğrulanmalı, gerçek readback yapılmalı ve yalnız yeni açık onay kayıt yetkisi vermeli. Eski yetkiyi/fingerprint'i taşıyan, readback'i atlayan veya yeni onay olmadan kayıt açan bozuk örnekler reddedilsin. Sıradan geçerli onay ve önceki retry/kimlik düzeltmeleri korunsun.
+
+Çözümün ayrıntısını sana bırakıyoruz. Validator'ın beklentilerini brief'teki doğru davranışa göre düzelt; eski onayın taşınmasını yakalayan olumsuz kontrolleri ve deadline kapsamını koru. Brief değerleri üretim koduna sabitlenmesin. İlgili yerel testleri ve self-check'i çalıştır; etkilenen hata düzeltmelerinden sonra gerekli kontrolleri tekrarlayabilirsin. Değişmeyen tüm suite'i sürekli tekrarlama.
+
+**Kontroller geçince onay beklemeden devam et:** kaynak commit'ini kaydet, mevcut Brief A/OpenAPI ile bir yeni builder çalıştırması yap. Mevcut bounded repair mekanizması kullanılabilir; run kendi testleri dahil 30 dakika sınırında kalsın. Üretilen workflow'u elle düzenleme. Builder'ın tek PUB-01 testi yeterli; yeni sürüm yayımlandıysa aynı sürümde tam A'yı bir kez çalıştır. Test sırasında agentı değiştirme; workspace'te başka simülasyonla çakışma.
+
+Build/platform engelinde kanıtı raporla. Bilinen simülasyonun okuması yarıda kaldıysa read-only resume kullan; görüşmeleri yeniden başlatma. Canlı başarısızlık olursa somut nedeni çıkarıp teslim et; yeniden üretim/test döngüsüne girme. A+B, memo parser genişletme, ayrı şef veya history değişiklikleri bu turda yok.
+
+`research/deadline-fix-live-result.md` içine düzeltmeyi, gerçek test sonuçlarını, kaynak commit'ini, yeni workflow/agent/version kimliklerini, PUB-01 ve tam A sonucunu, varsa başarısız vakaların nedenlerini, trace/export yollarını ve kalan engelleri yaz. Önceki ham build dosyaları kendi bilgisayarında bulunuyorsa teşhis için kullan; başka checkout'ta var sayma. Yeni sonuçları eski v6 skoru ile karıştırma. Çalışmayan teste skor uydurma; altyapı hatasını sıfır puan sayma.
+
+Mevcut ekip anahtarları, sabit telefon modeli ve resmî scorer korunsun. Sırlar ve ham artefaktlar Git dışında; teslim trace/export'u saklansın. Paylaşılabilir kod ve raporu commit/push et. Son bağımsız review bilgisini kendi tesliminle ilerletme. Son cevabında commit, rapor ve ölçülen sonucu verip bitir; “başlayayım mı?” diye sorma veya sonraki işe geçme.

@@ -25,6 +25,7 @@ Banka talimatları + OpenAPI → Builder → Freya'da telefon agentı → Test �
 11. [Focused düzeltme incelemesi](research/builder-review-484e6b2.md): 48 seçilmiş yerel test geçti; memo önceliği ve business-failure retry için kalan iki validator açığı. Henüz yeni canlı agent üretilmedi.
 12. [Sıradaki düzeltme ve canlı doğrulama promptu](NEXT_LIVE_VALIDATION_PROMPT.md): iki validator açığını kapat, bir builder çalıştırması ve aynı sürümde tek tam A testiyle teslim et.
 13. [Validator düzeltmeleri ve üretim blokajı incelemesi](research/builder-review-7d7dc3e.md): önceki iki açık kapandı; güvenli deadline readback'ini yanlış reddeden tarih testi üretimi engelliyor. Yeni canlı skor yok.
+14. [Güncel tarih düzeltmesi promptu](DEADLINE_FIX_PROMPT.md): yanlış reddi güvenlik kontrollerini koruyarak kapat, tek üretim ve aynı sürümde bir tam A testiyle teslim et.
 
 ## Klasörler
 
