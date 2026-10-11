@@ -7,7 +7,7 @@ Güncelleme: 11 Ekim 2026. Son review HEAD `484e6b2`; son incelenen uygulama com
 1. Bu dosya: hedef, ana fikir ve son doğrulanmış durum.
 2. [İlk geliştirme promptu](DEVELOPMENT_PROMPT.md): konuştuğumuz tasarımın ayrıntılı açıklaması.
 3. [Güncel inceleme](research/builder-review-484e6b2.md) ve [focused geliştirme sonucu](research/focused-fix-result.md): yeni kaynak kontrolleri ve kalan iki validator açığı. [Önceki review](research/builder-review-6d324cd.md) ile [ikinci geliştirme sonucu](research/second-builder-result.md) canlı v6 geçmişi içindir.
-4. [Son düzeltme promptu](FOCUSED_FIX_PROMPT.md): hızlı kaynak teslimi istendi, bu görevde üretim/canlı test yapılmadı. [İkinci geliştirme promptu](NEXT_DEVELOPMENT_PROMPT.md) ve [sonraki kapsam](AFTER_CURRENT_TASK_PROMPT.md) önceki planlardır; tamamlandıkları varsayılmamalı.
+4. [Sıradaki prompt](NEXT_LIVE_VALIDATION_PROMPT.md): kalan iki validator düzeltmesi, bir builder üretimi ve aynı sürümde bir tam A testi. [Önceki düzeltme promptu](FOCUSED_FIX_PROMPT.md) yalnız kaynak teslimiydi, o görevde üretim/canlı test yapılmadı. [İkinci geliştirme promptu](NEXT_DEVELOPMENT_PROMPT.md) ve [sonraki kapsam](AFTER_CURRENT_TASK_PROMPT.md) eski planlardır; tamamlandıkları varsayılmamalı.
 5. [Resmî kit README](build-the-builder/README.md), [örnek builder skill'i](build-the-builder/.claude/skills/build-phone-agent/SKILL.md), ilgili brief/OpenAPI ve ihtiyaç oldukça platform belgeleri. İş kurallarında verilen brief/API; platform davranışında belgeler ve doğrudan gözlem esas alınır. Araştırma notları bunların yerine geçmez.
 
 Review yaparken Git durumunu, commit farkını ve test edilen agent sürümünü yeniden kontrol et. Eski rapordaki bulguyu yeni sürümde otomatik olarak var veya düzelmiş sayma.
