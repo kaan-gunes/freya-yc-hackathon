@@ -64,6 +64,9 @@ is not stored. Generated artifacts are local and ignored by Git.
 `candidate-attempt-N.json` preserves the assembled full candidate.
 The compiled candidate is separate from the raw model response. The manifest
 records the compiler source hash and the trace records `workflow_compiled`.
+The compiler asks for a fresh answer when a payment non-answer has no current
+text, amount or date. It preserves the proposal and persuasion count. A real
+non-answer with current text still follows the sourced negotiation policy.
 
 To reuse the last saved complete candidate from a prior generation run, add
 `--resume-build build-the-builder/out/RUN_FOLDER` to the same build command.

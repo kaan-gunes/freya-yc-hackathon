@@ -35,7 +35,9 @@ Banka talimatları + OpenAPI → Builder → Freya'da telefon agentı → Test �
 21. [Önceki bağımsız review](research/builder-review-e655ed7.md): 57 test geçti; o aday 203/207'de kaldı, niyet hataları doğrulandı.
 22. [Önceki niyet-onarım promptu](CURRENT_INTENT_REPAIR_PROMPT.md) ve [Claude sonucu](research/current-intent-repair-result.md): niyet düzeldi; 214/214 aday üç graf kapısında reddedildi.
 23. [Calls incelemesi ve Kaan compiler sonucu](research/kaan-compiler-result.md): kaynak kontrollü onay dönüşü ve güncel onay kapısı; model çağırmadan **232/232**, provenance **47/47**, graf geçerli.
-24. **[Güncel V9 canlı sonucu](research/kaan-v9-live-result.md):** hazır aday yayımlandı; PUB-01 **1/1**, aynı sürümde tam A resmî **9/10**, banka **10/10** bağımsız doğrulandı. Tek kalan FAIL PUB-06'nın minimum tekrar teklifi; eksik güncel metin + non-answer sınırı teşhis edildi. A+B/tekrar yapılmadı.
+24. [Önceki V9 canlı sonucu](research/kaan-v9-live-result.md): hazır aday yayımlandı; PUB-01 **1/1**, aynı sürümde tam A resmî **9/10**, banka **10/10** bağımsız doğrulandı. Tek kalan FAIL PUB-06'nın minimum tekrar teklifi; eksik güncel metin + non-answer sınırı teşhis edildi. A+B/tekrar yapılmadı.
+
+25. **[Güncel V10 kaynak düzeltmesi ve canlı sonuç](research/kaan-v10-live-result.md):** eksik `non_answer` metin koruması kaynakta; 234/234, provenance 47/47. PUB-06 1/1 → aynı V10 tam A **8/10**, banka **10/10** bağımsız doğrulandı. Dolu metinli PUB-06 tekrar teklifi ve PUB-10 hakem uyuşmazlığı açık. [Final teslim hazırlığı ve eksikler](research/final-submission-readiness.md): final 20:00 açılır, teslim 23:00 İstanbul; practice A final yerine geçmez.
 
 ## Klasörler
 
