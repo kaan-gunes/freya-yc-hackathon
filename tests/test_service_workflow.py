@@ -110,6 +110,34 @@ def compiled_report(value):
 
 
 class ServiceWorkflowTests(unittest.TestCase):
+    def test_request_allof_preserves_envelope_fields_required_and_value_constraints(self):
+        value = candidate()
+        operation = value['openapi']['paths']['/items']['post']
+        value['openapi']['components'] = {'schemas': {'RequestEnvelope': {
+            'type': 'object', 'required': ['data'], 'properties': {'data': {
+                'type': 'object', 'required': ['actorRef'], 'properties': {'actorRef': {'type': 'string'}}}}}}}
+        operation['requestBody']['content']['application/json']['schema'] = {'allOf': [
+            {'$ref': '#/components/schemas/RequestEnvelope'},
+            {'type': 'object', 'properties': {'data': {'type': 'object', 'required': ['slot'], 'properties': {
+                'slot': {'allOf': [{'type': 'integer', 'minimum': 1, 'maximum': 9}, {'enum': [2, 3]}]}}}}}]}
+        _, _, report = compiled_report(value)
+        self.assertTrue(report['ok'], report['errors'])
+        missing = copy.deepcopy(value)
+        missing['workflow']['nodes']['action']['pre_actions'][0]['function']['parameters']['properties']['body']['required'] = []
+        _, _, report = compiled_report(missing)
+        self.assertFalse(report['ok'])
+        self.assertTrue(any('missing required request field data' in error for error in report['errors']))
+        wrong = copy.deepcopy(value)
+        wrong['policy']['security']['action_guards']['adjustItem']['fixture']['slot'] = 8
+        _, _, report = compiled_report(wrong)
+        self.assertFalse(report['ok'])
+        self.assertTrue(any('composed source schema' in error for error in report['errors']))
+
+    def test_portable_type_checks_run_with_the_same_safe_builtin_as_python(self):
+        code = "vars['kind'] = 'number' if type(vars.get('value')) in [int, float] else 'other'"
+        for value, expected in [(2, 'number'), (2.5, 'number'), (True, 'other'), ('2', 'other')]:
+            _run_check(code, {'vars': {'value': value}, 'expected': {'kind': expected}})
+
     def test_allof_keeps_shared_required_fields_types_and_enum_constraints(self):
         value = candidate()
         operation = value['openapi']['paths']['/items']['post']

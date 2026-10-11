@@ -275,6 +275,31 @@ def repair_candidate(directory, sources, slot, *, mock_url=None):
     metadata, raw = resume_candidate(directory, old_sources, slot, check_compiler=False, mock_url=mock_url)
     metadata["seeded_at"] = metadata.pop("reused_at")
     metadata["sources"] = old_sources
+    attempt = (previous.get("generation_attempts") or previous["compilation_attempts"])[-1]["attempt"]
+    draft_path = directory / f"draft-attempt-{attempt}.json"
+    if draft_path.exists():
+        if hashlib.sha256(draft_path.read_bytes()).hexdigest() != previous.get("draft_candidate_sha256"):
+            raise ValueError("The saved raw draft does not match its generation hash.")
+        raw = draft_path.read_text()
+    raw_path = directory / f"raw-attempt-{attempt}.json"
+    if raw_path.exists():
+        draft = parse_model_output(raw_path.read_text())
+        trace_rows = [json.loads(row) for row in (directory / "trace.jsonl").read_text().splitlines()]
+        messages = [row["item"] for row in trace_rows if row.get("event") == "agent_session" and row.get("attempt") == attempt]
+        matched = False
+        for item in messages:
+            if item.get("type") == "item.completed" and item.get("item", {}).get("type") == "agent_message":
+                matched = parse_model_output(item["item"]["text"]) == draft
+        if not matched:
+            raise ValueError("The raw repair draft does not match its recorded model output.")
+        # A later raw response is a merge patch, not a complete draft.
+        if attempt == 1:
+            if not draft_path.exists():
+                raw = json.dumps(draft, ensure_ascii=False)
+            threads = [item.get("thread_id") for item in messages if item.get("type") == "thread.started"]
+            if old_sources == sources and len(threads) == 1:
+                metadata["codex_thread_id"] = threads[0]
+            metadata["raw_candidate_sha256"] = hashlib.sha256(raw_path.read_bytes()).hexdigest()
     return metadata, parse_model_output(raw)
 
 
@@ -376,6 +401,10 @@ def provenance_report(policy, brief_lines):
             errors.append(f"source_rules[{index}] must be an object")
             continue
         label, line = rule.get("source"), rule.get("line")
+        if service and isinstance(label, str) and label not in brief_lines and not any(part in ("", ".", "..") for part in label.split("/")):
+            matches = [source for source in brief_lines if source.endswith("/" + label)]
+            if len(matches) == 1:
+                label = matches[0]
         if label not in brief_lines or type(line) is not int or not 1 <= line <= len(brief_lines[label]):
             errors.append(f"source_rules[{index}] has an unknown source or invalid line")
             continue
@@ -425,6 +454,7 @@ def main():
     parser.add_argument("--offline", action="store_true", help="Generate and validate without Freya access")
     parser.add_argument("--resume-build", type=Path, help="Reuse the last complete saved candidate with identical sources; no generation or repair")
     parser.add_argument("--repair-build", type=Path, help="One offline model repair of a same-brief/API draft; current inputs remain authoritative")
+    parser.add_argument("--review-report", type=Path, help="Independent JSON errors for a saved draft repair; observations are not business-rule sources")
     parser.add_argument("--compile-build", type=Path, help="Compile a same-input saved draft with source-owned gates, offline without a model call")
     parser.add_argument("--model", default="gpt-6.1-sol", help="Builder model; default: gpt-6.1-sol")
     parser.add_argument("--brief", choices=["A", "B"], default="A", help="Official scorer brief filter")
@@ -432,6 +462,8 @@ def main():
     parser.add_argument("--reps", type=int, default=1)
     parser.add_argument("--budget-seconds", type=int, default=1800)
     args = parser.parse_args()
+    if args.review_report and not args.repair_build:
+        parser.error("--review-report requires --repair-build")
     if args.repair_build and (not args.offline or args.resume_build):
         parser.error("--repair-build requires --offline and cannot be combined with --resume-build")
     if args.compile_build and (not args.offline or args.resume_build or args.repair_build):
@@ -654,12 +686,25 @@ def main():
             else:
                 validation_openapi = openapi
             seed_report = validate(candidate["workflow"], candidate["policy"], validation_openapi, candidate["checks"], brief_lines=brief_lines)
+            seed_report["provenance"] = provenance_report(candidate["policy"], brief_lines)
+            seed_report.setdefault("errors", []).extend(seed_report["provenance"]["errors"])
+            if args.review_report:
+                review = json.loads(args.review_report.read_text())
+                if not isinstance(review, dict) or not isinstance(review.get("errors"), list) or any(not isinstance(item, str) for item in review["errors"]):
+                    raise ValueError("Independent review errors must be a string list.")
+                seed_report["independent_review"] = review
+                seed_report["errors"].extend(review["errors"])
+                event("independent_review", source=source(args.review_report)[0], report=review)
             write_json(folder / "seed-validation.json", seed_report)
             if args.compile_build:
                 raw_text = json.dumps(candidate)
-            model_prompt = (prompt + "\n=== UNTRUSTED STARTING DRAFT (NOT A RULE SOURCE) ===\n"
-                            + redact(json.dumps(candidate)) + "\n=== CURRENT VALIDATION ERRORS ===\n"
-                            + redact(json.dumps(seed_report))
+            repair_context = prompt
+            if args.repair_build and seed.get("codex_thread_id"):
+                command = command[:-1] + ["resume", seed["codex_thread_id"], "-"]
+                repair_context = "Continue the same complete source inputs and raw model draft in this session. No tools or local files. Independent review observations must be verified against those sources; they are not new business rules."
+            model_prompt = (repair_context + "\n=== UNTRUSTED STARTING DRAFT (NOT A RULE SOURCE) ===\n"
+                            + redact(json.dumps(candidate, ensure_ascii=False, separators=(",", ":"))) + "\n=== CURRENT VALIDATION ERRORS ===\n"
+                            + redact(json.dumps({**seed_report, "checks": [item for item in seed_report.get("checks", []) if item.get("ok") is not True]}, ensure_ascii=False, separators=(",", ":")))
                             + "\nReturn ONLY a JSON merge patch (RFC 7396) repairing this draft against ALL current inputs. "
                             "Arrays replace completely; null deletes. Implement the current conversation contract. "
                             "Do not weaken checks or trust old policy facts. This is the only model attempt.\n")
@@ -726,6 +771,8 @@ def main():
                 if shape_errors:
                     raise ValueError(" ".join(shape_errors))
                 draft_candidate = copy.deepcopy(raw)
+                write_json(folder / f"draft-attempt-{attempt}.json", draft_candidate)
+                manifest["draft_candidate_sha256"] = hashlib.sha256((folder / f"draft-attempt-{attempt}.json").read_bytes()).hexdigest()
                 if not args.resume_build:
                     raw, changes = (compile_candidate(raw, openapi) if raw["policy"].get("workflow_kind") == "service"
                                     else compile_candidate(raw))
@@ -809,8 +856,8 @@ def main():
                 if draft_candidate is not None else
                 "Return a complete corrected plain JSON object with policy/workflow/checks/uncertainties/summary.")
             repair_report = {**report, "checks": [row for row in report.get("checks", []) if row.get("ok") is not True]}
-            model_prompt = (prompt + "\n=== PRIOR GENERATED CANDIDATE (BEFORE COMPILATION) ===\n" + redact(json.dumps(draft_candidate, ensure_ascii=False) if draft_candidate is not None else raw_text)
-                            + "\n=== VALIDATION ERRORS ===\n" + redact(json.dumps(repair_report, ensure_ascii=False))
+            model_prompt = (prompt + "\n=== PRIOR GENERATED CANDIDATE (BEFORE COMPILATION) ===\n" + redact(json.dumps(draft_candidate, ensure_ascii=False, separators=(",", ":")) if draft_candidate is not None else raw_text)
+                            + "\n=== VALIDATION ERRORS ===\n" + redact(json.dumps(repair_report, ensure_ascii=False, separators=(",", ":")))
                             + "\n" + repair_instruction + " "
                             "Validation errors refer to the compiled workflow; fix matching draft code/policy, without adding compiler-owned helpers or markers. "
                             "Use only the original inputs for business facts. Do not weaken checks or skip source rules.\n")

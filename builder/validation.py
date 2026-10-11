@@ -27,7 +27,7 @@ SAFE_MODULES = {
 SAFE_BUILTINS = {name: getattr(builtins, name) for name in (
     "abs", "all", "any", "bool", "dict", "enumerate", "float", "format", "int", "isinstance",
     "len", "list", "max", "min", "next", "range", "reversed", "round", "set", "sorted",
-    "str", "sum", "tuple", "zip", "Exception", "ValueError", "TypeError",
+    "str", "sum", "tuple", "type", "zip", "Exception", "ValueError", "TypeError",
     "KeyError", "IndexError", "ZeroDivisionError", "OverflowError", "AssertionError",
 )}
 UNSAFE_CALLS = {"open", "eval", "exec", "compile", "input", "globals", "locals", "getattr", "setattr", "delattr", "breakpoint", "help", "exit", "quit", "now", "today", "utcnow"}
@@ -1859,11 +1859,12 @@ def _validate_service(workflow, policy, openapi, checks, brief_lines):
                 fields = body.get('properties', {})
                 def request_fields(schema, provided, required, prefix=''):
                     schema = _resolve(schema, openapi)
-                    for field in schema.get('required', []):
+                    source_fields, source_required = _service_properties(schema, openapi)
+                    for field in source_required:
                         if field not in provided or field not in required:
                             fail(name + ': missing required request field ' + prefix + field)
                     for field, spec in provided.items():
-                        expected = _resolve(schema.get('properties', {}).get(field, {}), openapi)
+                        expected = _resolve(source_fields.get(field, {}), openapi)
                         value = spec.get('default')
                         match = PLACEHOLDER.fullmatch(value) if isinstance(value, str) else None
                         if not expected or spec.get('type') not in _service_types(expected, openapi) or 'const' in spec:
@@ -2146,10 +2147,11 @@ def _validate_service(workflow, policy, openapi, checks, brief_lines):
                           else 'string' if isinstance(value, str) else 'integer' if isinstance(value, int) else 'number' if isinstance(value, float) else 'null')
                 require(actual in allowed or actual == 'integer' and 'number' in allowed, 'resolved request value has wrong JSON type')
                 if isinstance(value, dict):
-                    require(all(field in value for field in schema.get('required', [])), 'resolved request omitted required fields')
+                    source_fields, source_required = _service_properties(schema, openapi)
+                    require(all(field in value for field in source_required), 'resolved request omitted required fields')
                     for key, item in value.items():
-                        require(key in schema.get('properties', {}), 'resolved request introduced unknown fields')
-                        shape(item, schema['properties'][key])
+                        require(key in source_fields, 'resolved request introduced unknown fields')
+                        shape(item, source_fields[key])
                 if isinstance(value, list):
                     for item in value:
                         shape(item, schema['items'])
@@ -2160,10 +2162,13 @@ def _validate_service(workflow, policy, openapi, checks, brief_lines):
                     require('minimum' not in schema or value >= schema['minimum'], 'request number below source bound')
                     require('maximum' not in schema or value <= schema['maximum'], 'request number above source bound')
             shape(body, schema)
+            from builder.compiler import _service_matches_schema, _service_schema_definition
+            require(_service_matches_schema(body, _service_schema_definition(schema, openapi)),
+                    'resolved request violates composed source schema constraints')
             for path, variable in context_bindings.items():
                 declared = schema
                 for part in path.split('.'):
-                    declared = _resolve(declared, openapi).get('properties', {}).get(part, {})
+                    declared = _service_properties(declared, openapi)[0].get(part, {})
                 if declared:
                     require(_json_equal(_service_path(body, path), state.get(variable)), 'request changed or omitted trusted call context at ' + path)
 

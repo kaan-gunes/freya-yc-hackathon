@@ -17,6 +17,33 @@ import freya
 
 
 class BuildAgentChecks(unittest.TestCase):
+    def test_service_citations_allow_only_unique_source_suffixes(self):
+        sources = {"snapshot/a/rules.md": ["Exact rule"], "snapshot/b/rules.md": ["Other rule"]}
+        def report(label, quote="Exact rule"):
+            return runner.provenance_report({"workflow_kind": "service", "source_rules": [{"source": label, "line": 1, "text": quote}]}, sources)
+        self.assertTrue(report("a/rules.md")["ok"])
+        self.assertFalse(report("rules.md")["ok"])
+        self.assertFalse(report("../a/rules.md")["ok"])
+        self.assertFalse(report("a/rules.md", "Invented rule")["ok"])
+
+    def test_repair_uses_only_the_raw_draft_matching_the_model_trace(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            draft = {"workflow": {"nodes": {"guard": "raw"}}}
+            (path / "manifest.json").write_text(json.dumps({"sources": [], "generation_attempts": [{"attempt": 1}]}))
+            (path / "raw-attempt-1.json").write_text(json.dumps(draft))
+            thread = "00000000-0000-0000-0000-000000000001"
+            rows = [{"event": "agent_session", "attempt": 1, "item": {"type": "thread.started", "thread_id": thread}},
+                    {"event": "agent_session", "attempt": 1, "item": {"type": "item.completed", "item": {"type": "agent_message", "text": json.dumps(draft)}}}]
+            (path / "trace.jsonl").write_text("\n".join(map(json.dumps, rows)))
+            with patch.object(runner, "resume_candidate", side_effect=lambda *a, **k: ({"reused_at": "now"}, '{"compiled": true}')):
+                metadata, result = runner.repair_candidate(path, [], "slot")
+                self.assertEqual(result, draft)
+                self.assertEqual(metadata["codex_thread_id"], thread)
+                (path / "raw-attempt-1.json").write_text('{"workflow": {"nodes": {"guard": "tampered"}}}')
+                with self.assertRaisesRegex(ValueError, "recorded model output"):
+                    runner.repair_candidate(path, [], "slot")
+
     def test_offline_seed_repair_is_one_model_call_and_never_unchanged_reuse(self):
         for invalid in (False, True):
             with self.subTest(invalid=invalid), tempfile.TemporaryDirectory() as directory:
