@@ -130,6 +130,12 @@ vars['persuasion_attempts'] = int(vars.get('persuasion_attempts', 0))
 vars['route'] = 'listen'
 if event == 'third_party':
     vars['party_confirmation'] = ''
+elif event == 'human':
+    vars['exception'] = 'human'
+    if vars.get('human_requested'):
+        vars['route'] = 'transfer'
+    else:
+        vars['human_requested'] = True
 elif vars.get('bank_status') == 'verified' and vars.get('stage') in ('identity', 'account_resume', 'account_pending'):
     vars['stage'] = 'account_pending'
     vars['route'] = 'account'
@@ -172,12 +178,36 @@ def payment_day(raw):
     try:
         return datetime.date.fromisoformat(raw)
     except ValueError:
+        start = datetime.datetime.fromisoformat(vars['now']).date()
+        end = datetime.date.fromisoformat(vars['deadline'])
+        months = 'january february march april may june july august september october november december'.split()
+        month_pattern = '(' + '|'.join(months) + ')'
+        clean = re.sub(r'(\d)(st|nd|rd|th)\b', r'\1', raw.lower().strip())
+        clean = re.sub(r'^the ', '', clean)
+        match = re.fullmatch(r'([0-9]{1,2})(?: of)? ' + month_pattern, clean)
+        if match:
+            ordinal, month = int(match.group(1)), months.index(match.group(2)) + 1
+        else:
+            match = re.fullmatch(month_pattern + r' ([0-9]{1,2})', clean)
+            ordinal, month = (int(match.group(2)), months.index(match.group(1)) + 1) if match else (None, None)
+        if match:
+            matches = []
+            for year in range(start.year, max(start.year + 1, end.year) + 1):
+                try:
+                    named = datetime.date(year, month, ordinal)
+                except ValueError:
+                    continue
+                if named >= start:
+                    matches.append(named)
+            in_window = [named for named in matches if named <= end]
+            if len(in_window) > 1 or not matches:
+                vars['route'] = 'clarify'
+                raise ValueError('month and day need one year')
+            return in_window[0] if in_window else matches[0]
         weekdays = 'monday tuesday wednesday thursday friday saturday sunday'.split()
         match = re.fullmatch(r'(monday|tuesday|wednesday|thursday|friday|saturday|sunday) the ([0-9]{1,2})(?:st|nd|rd|th)', raw.lower().strip())
         if not match:
             raise ValueError('complete weekday and ordinal required')
-        start = datetime.datetime.fromisoformat(vars['now']).date()
-        end = datetime.date.fromisoformat(vars['deadline'])
         weekday = weekdays.index(match.group(1))
         ordinal = int(match.group(2))
         matches = []
@@ -211,41 +241,82 @@ except Exception:
 """
     approval = """event = vars.get('approval', '')
 correction = vars.get('correction', '')
+current_amount = vars.get('approval_amount', '')
+current_date = vars.get('approval_date', '')
+current_text = vars.get('approval_text', '')
 vars['approval'] = ''
 vars['correction'] = ''
+vars['approval_amount'] = ''
+vars['approval_date'] = ''
+vars['approval_text'] = ''
 vars['record_authorization'] = ''
 vars['route'] = 'confirmation'
+changed_amount = False
+if current_amount:
+    try:
+        changed_amount = float(str(current_amount).removesuffix(' dollars')) != float(vars.get('validated_amount', 0))
+    except (ValueError, TypeError):
+        changed_amount = True
+changed_date = bool(current_date and current_date != vars.get('validated_date'))
 if event in ('human', 'plan', 'dispute'):
     vars['exception'] = event
     vars['route'] = 'transfer'
-elif correction in ('yes', True):
+elif correction in ('yes', True) or changed_amount or changed_date:
+    if current_amount:
+        vars['amount'] = current_amount
+    if current_date:
+        vars['date'] = current_date
     vars['readback_fingerprint'] = ''
+    vars['offer_fingerprint'] = ''
+    vars['write_result'] = ''
+    vars['write_attempts'] = 0
     vars['route'] = 'offer'
 elif not vars.get('recorded') and vars.get('offer_fingerprint') and vars.get('offer_fingerprint') == vars.get('readback_fingerprint') and vars.get('write_result') != 'unknown' and int(vars.get('write_attempts', 0)) < 2 and (event == 'yes' or vars.get('write_result') == 'failed'):
     vars['record_authorization'] = 'authorized'
     vars['write_attempts'] = int(vars.get('write_attempts', 0)) + 1
     vars['write_result'] = ''
+    vars['record_response.status'] = ''
+    vars['record_response.status_code'] = ''
+    vars['record_response.data.ok'] = ''
+    vars['record_response.message'] = ''
     vars['route'] = 'record'
 """
     saved = "ok = result.get('data', {}).get('ok')\nvars['recorded'] = 'recorded' if ok is True else ''\nvars['write_result'] = 'ok' if ok is True else 'failed' if ok is False else 'unknown'\n"
+    record_result = """status = vars.get('record_response.status', '')
+status_code = str(vars.get('record_response.status_code', ''))
+ok = str(vars.get('record_response.data.ok', '')).lower()
+vars['record_authorization'] = ''
+vars['recorded'] = 'recorded' if status == 'success' and ok == 'true' else ''
+vars['write_result'] = 'ok' if vars['recorded'] else 'failed' if (status == 'error' and status_code == '500') or (status == 'success' and ok == 'false') else 'unknown'
+vars['route'] = 'retry' if vars['write_result'] == 'failed' and int(vars.get('write_attempts', 0)) < 2 else 'end'
+"""
     transfer_guard = "vars['transfer_authorization'] = ''\nif vars.get('exception') in ('human', 'plan', 'dispute'):\n    vars['transfer_queue'] = 'restructuring' if vars['exception'] == 'plan' else 'support'\n    vars['transfer_authorization'] = 'authorized'\n"
     closing = "body = config.get('body', {})\nbody['outcome'] = vars.get('outcome', 'not_verified')\nif body['outcome'] in ('promise', 'paid'):\n    body.pop('reason', None)\nelse:\n    body['reason'] = vars.get('reason', 'declined')\nconfig['body'] = body\n"
     workflow = {"initial_node": "identity", "nodes": {
-        "identity": {"name": "identity", "node_type": "conversation", "on_enter": {"type": "tts", "text": "Am I speaking with the customer?"}, "extraction_schema": [{"name": "speech_event", "type": "string", "enum": ["", "yes", "no", "question", "third_party"], "min_confidence": 0, "max_retries": 1}, {"name": "speech_answer", "type": "string", "min_confidence": 0, "max_retries": 1}, {"name": "speech_date", "type": "string", "min_confidence": 0, "max_retries": 1}, {"name": "speech_amount", "type": "string", "min_confidence": 0, "max_retries": 1}, {"name": "speech_text", "type": "string", "min_confidence": 0, "max_retries": 1}], "transitions": [route("decision")]},
-        "decision": code_node("decision", decision, [route("account", {"logic": "or", "conditions": [{"logic": "and", "conditions": [guard("bank_status", "verified"), guard("route", "account")]}]}), route("verify", guard("route", "verify")), route("offer", guard("route", "offer")), route("identity")]),
+        "identity": {"name": "identity", "node_type": "conversation", "on_enter": {"type": "tts", "text": "Am I speaking with the customer?"}, "extraction_schema": [{"name": "speech_event", "type": "string", "enum": ["", "yes", "no", "question", "third_party", "paid", "dispute", "plan", "human"], "min_confidence": 0, "max_retries": 1}, {"name": "speech_answer", "type": "string", "min_confidence": 0, "max_retries": 1}, {"name": "speech_date", "type": "string", "min_confidence": 0, "max_retries": 1}, {"name": "speech_amount", "type": "string", "min_confidence": 0, "max_retries": 1}, {"name": "speech_text", "type": "string", "min_confidence": 0, "max_retries": 1}], "transitions": [route("decision")]},
+        "decision": code_node("decision", decision, [route("account", {"logic": "or", "conditions": [{"logic": "and", "conditions": [guard("bank_status", "verified"), guard("route", "account")]}]}), route("verify", guard("route", "verify")), route("offer", guard("route", "offer")), route("transfer_guard", guard("route", "transfer")), route("identity")]),
         "verify": {"name": "verify", "node_type": "api_request", "passthrough": True, "pre_actions": [api("verify_identity", {"customer_id": "{{customer_id}}", "field": "{{verification_question}}", "answer": "{{verification_answer}}"}, post_process_code=identity)], "transitions": [route("decision")]},
         "account": {"name": "account", "node_type": "api_request", "passthrough": True, "pre_actions": [api("get_account", {"customer_id": "{{customer_id}}"})], "transitions": [route("offer")]},
-        "offer": code_node("offer", offer, [route("confirmation", guard("route", "confirmation")), route("end")]),
+        "offer": code_node("offer", offer, [route("confirmation", guard("route", "confirmation")), route("clarify_date", guard("route", "clarify")), route("end")]),
         "confirmation": {"name": "confirmation", "node_type": "conversation", "on_enter": {"type": "tts", "text": "Do you confirm {{validated_amount}} on {{validated_date}}?"}, "extraction_schema": [{"name": "approval", "type": "string", "enum": ["", "yes", "no", "question", "human", "plan", "hardship", "dispute"], "min_confidence": 0, "max_retries": 1}, {"name": "correction", "type": "string", "enum": ["", "yes", "no"], "min_confidence": 0, "max_retries": 1}], "transitions": [route("approval")]},
         "approval": code_node("approval", approval, [route("record", guard("record_authorization", "authorized")), route("transfer_guard", guard("route", "transfer")), route("offer", guard("route", "offer")), route("confirmation")]),
-        "record": {"name": "record", "node_type": "api_request", "passthrough": True, "pre_actions": [api("create_promise", {"customer_id": "{{customer_id}}", "product_id": "{{validated_product}}", "amount": "{{validated_amount:json}}", "date": "{{validated_date}}"}, post_process_code=saved)], "transitions": [route("end")]},
+        "record": {"name": "record", "node_type": "api_request", "passthrough": True, "pre_actions": [api("create_promise", {"customer_id": "{{customer_id}}", "product_id": "{{validated_product}}", "amount": "{{validated_amount:json}}", "date": "{{validated_date}}"}, post_process_code=saved)], "transitions": [route("record_result")]},
+        "record_result": code_node("record_result", record_result, [route("approval", guard("route", "retry")), route("end")]),
         "transfer_guard": code_node("transfer_guard", transfer_guard, [route("transfer", guard("transfer_authorization", "authorized")), route("end")]),
         "transfer": {"name": "transfer", "node_type": "api_request", "passthrough": True, "pre_actions": [api("transfer_to_agent", {"customer_id": "{{customer_id}}", "queue": "{{transfer_queue}}"})], "transitions": [route("end")]},
         "end": {"name": "end", "node_type": "end_call", "transitions": [], "terminal": {"type": "function", "function": {"name": "end_call", "handler": "__function__:end_call", "parameters": {"type": "object", "properties": {"message_mode": {"type": "string", "default": "custom"}, "spoken_message": {"type": "string", "default": "Thank you. Goodbye."}}}}}},
     }, "tools": [api("close_call", {"customer_id": "{{customer_id}}", "outcome": "not_verified", "reason": "declined"}, pre_process_code=closing)]}
     workflow["tools"][0]["config"]["alwaysRunsAt"] = ["end_of_call"]
+    workflow["nodes"]["clarify_date"] = copy.deepcopy(workflow["nodes"]["identity"])
+    workflow["nodes"]["clarify_date"].update(name="clarify_date", on_enter={"type": "tts", "text": "Please give the payment date with a year."})
+    workflow["nodes"]["confirmation"]["extraction_schema"].extend({"name": name, "type": "string", "min_confidence": 0, "max_retries": 1} for name in ("approval_amount", "approval_date", "approval_text"))
     policy = {"security": {
         "customer_id_field": "customer_id", "customer_id_variable": "customer_id",
+        "promise_request_fields": {"amount": "amount", "date": "date"},
+        "identity_questions": [
+            {"kind": "date", "source_rule": "A11", "source_text": "date of birth", "request_context": {"field": "date_of_birth"}},
+            {"kind": "numeric_code", "source_rule": "A11", "source_text": "last four digits of the phone number", "request_context": {"field": "phone_last4"}},
+        ],
         "identity_nodes": ["identity"], "trusted_variables": ["bank_status", "bank_full_amount", "deadline", "record_authorization", "recorded", "validated_product", "validated_amount", "validated_date", "offer_fingerprint", "readback_fingerprint", "exception", "route", "stage", "write_attempts", "write_result", "persuasion_attempts", "party_confirmation", "verification_answer", "verification_question", "code_length", "transfer_authorization", "transfer_queue"],
         "bank_verification_variable": "bank_status", "bank_gate": {"node": "decision", "variable": "bank_status", "operand": "verified", "target": "account"},
         "account_nodes": ["account"], "offer_guard_node": "offer", "approval_guard_node": "approval", "confirmation_nodes": ["confirmation"], "record_nodes": ["record"], "close_nodes": ["end"],
@@ -254,14 +325,25 @@ elif not vars.get('recorded') and vars.get('offer_fingerprint') and vars.get('of
         "validation_events": {name: name for name in ("yes", "no", "question", "human", "plan", "hardship", "dispute", "third_party")},
         "validation_routes": {name: name for name in ("account", "confirmation", "record", "offer", "transfer", "end")},
         "validation_fixture": {"customer_id": "c-fixture", "amount": "25", "date": "2026-10-14", "deadline": "2026-10-20", "bank_product": "p1", "bank_full_amount": 50, "now": "2026-10-14T09:00:00", "bank_status": "verified", "stage": "payment"},
-        "validation_confirmation_fixture": {"approval": "yes", "correction": ""},
-        "validation_correction_fixture": {"approval": "yes", "correction": "yes"},
+        "validation_confirmation_fixture": {"approval": "yes", "correction": "", "approval_amount": "", "approval_date": "", "approval_text": "Yes, I confirm."},
+        "validation_correction_fixture": {"approval": "yes", "correction": "yes", "approval_amount": "25", "approval_date": "2026-10-14", "approval_text": "Yes, but use 25 on 2026-10-14."},
         "validation_identity_fixture": {"bank_status": "verified", "stage": "identity", "speech_event": "question"},
         "validation_third_party_fixture": {"bank_status": "unverified", "stage": "identity", "party_confirmation": "confirmed", "speech_event": "third_party", "speech_answer": "tomorrow"},
         "validation_identity_answer_fixture": {"customer_id": "c-fixture", "bank_status": "unverified", "stage": "identity", "party_confirmation": "confirmed", "speech_event": "yes", "speech_answer": "1990-04-12"},
         "validation_identity_code_fixture": {"customer_id": "c-fixture", "bank_status": "unverified", "stage": "identity_phone", "party_confirmation": "confirmed", "speech_event": "yes", "speech_text": "0014", "code_length": 4},
         "action_guards": {"transfer_to_agent": {"node": "transfer_guard", "variable": "transfer_authorization", "operand": "authorized"}},
     }, "source_rules": [{"id": "A1", "source": "brief.md", "line": 1, "text": "rule", "stage": "identity"}], "unsupported": []}
+    policy["security"]["validation_state"].update(approval_amount="approval_amount", approval_date="approval_date", approval_text="approval_text")
+    policy["security"]["record_result_node"] = "record_result"
+    policy["security"]["trusted_variables"].extend("record_response." + name for name in ("status", "status_code", "data.ok", "message"))
+    policy['security']['trusted_variables'].append('human_requested')
+    policy['security']['validation_events']['paid'] = 'paid'
+    policy['security']['validation_pre_identity_human_fixture'] = {
+        'customer_id': 'c-fixture', 'bank_status': 'unverified', 'stage': 'identity', 'human_requested': True,
+        'speech_event': 'human', 'speech_text': 'Please transfer me to a human.'}
+    policy['source_rules'].append({
+        'id': 'privacy', 'source': 'brief.md', 'line': 2, 'stage': 'identity',
+        'text': 'Do not say "collections", "debt", "payment" before identity is verified.'})
     checks = [
         {"name": "identity_unverified", "node_id": "verify:verify_identity:post", "vars": {"bank_status": "verified"}, "result": {"data": {"ok": True, "all_verified": False}}, "expected": {"bank_status": "unverified"}},
         {"name": "invalid_amount", "node_id": "offer", "vars": {"amount": 1, "date": "2026-10-14"}, "expected": {"record_authorization": ""}},
@@ -271,6 +353,7 @@ elif not vars.get('recorded') and vars.get('offer_fingerprint') and vars.get('of
         {"name": "duplicate_promise_blocked", "node_id": "approval", "vars": {"approval": "yes", "recorded": True}, "expected": {"record_authorization": ""}},
         {"name": "negative_confirmation", "node_id": "approval", "vars": {"approval": "no", "record_authorization": "authorized"}, "expected": {"record_authorization": ""}},
     ]
+    policy["source_rules"].append({"id": "A11", "source": "brief.md", "line": 11, "text": "Ask two security questions, one at a time: first the date of birth, then the last four digits of the phone number.", "stage": "identity"})
     return workflow, policy, copy.deepcopy(OPENAPI), checks
 
 
@@ -331,7 +414,7 @@ class ValidationTests(unittest.TestCase):
     def test_renamed_customer_binding(self):
         arguments = candidate()
         arguments[1]["security"].update(customer_id_field="call_secret", customer_id_variable="session_secret")
-        for fixture_name in ("validation_fixture", "validation_identity_answer_fixture", "validation_identity_code_fixture"):
+        for fixture_name in ("validation_fixture", "validation_identity_answer_fixture", "validation_identity_code_fixture", "validation_pre_identity_human_fixture"):
             fixture = arguments[1]["security"][fixture_name]
             fixture["session_secret"] = fixture.pop("customer_id")
         for item in arguments[2]["paths"].values():
@@ -1110,8 +1193,13 @@ class ValidationTests(unittest.TestCase):
         fixture = arguments[1]["security"]["validation_identity_code_fixture"]
         fixture.update(speech_text="000014", code_length=6)
         arguments[1]["security"]["validation_identity_code_request_context"] = {"field": "security_code"}
+        question = arguments[1]["security"]["identity_questions"][1]
+        question.update(source_text="six-digit code", request_context={"field": "security_code"})
+        source = next(rule for rule in arguments[1]["source_rules"] if rule["id"] == "A11")
+        source["text"] = source["text"].replace("last four digits of the phone number", "six-digit code")
         schema = arguments[2]["paths"]["/verify_identity"]["post"]["requestBody"]["content"]["application/json"]["schema"]
         schema["properties"]["field"]["enum"] = ["date_of_birth", "security_code"]
+        schema["properties"]["answer"]["description"] = "For date_of_birth: YYYY-MM-DD. For security_code: six digits."
         body = arguments[0]["nodes"]["verify"]["pre_actions"][0]["function"]["parameters"]["properties"]["body"]
         body["properties"]["field"]["enum"] = ["date_of_birth", "security_code"]
         code = arguments[0]["nodes"]["decision"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]
@@ -1152,6 +1240,8 @@ class ValidationTests(unittest.TestCase):
         body["required"] = ["question_kind" if name == "field" else name for name in body["required"]]
         arguments[1]["security"]["validation_identity_request_context"] = {"question_kind": "birthdate"}
         arguments[1]["security"]["validation_identity_code_request_context"] = {"question_kind": "phone_last4"}
+        arguments[1]["security"]["identity_questions"][0]["request_context"] = {"question_kind": "birthdate"}
+        arguments[1]["security"]["identity_questions"][1]["request_context"] = {"question_kind": "phone_last4"}
         code = arguments[0]["nodes"]["decision"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]
         code["default"] = code["default"].replace("vars['verification_question'] = 'date_of_birth'", "vars['verification_question'] = 'birthdate'")
         report = validate(*arguments)

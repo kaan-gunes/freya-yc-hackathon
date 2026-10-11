@@ -266,11 +266,17 @@ class RunEvidence:
         self.index += 1
         self.current.update(results_status="pending", scoring_status="pending")
         self.save()
+        recovery_started = time.monotonic() if self.resume else None
         try:
             result = original(agent_id, cases, ids)
             rows, simulation_id, iteration_id, status, seconds, _ = result
             self.current.update(rows=rows, simulation_id=simulation_id, iteration_id=iteration_id,
-                                status=status, execution_status=status, seconds=seconds)
+                                status=status, execution_status=status)
+            if self.resume:
+                # shortcut: unsaved execution timing contributes zero to official totals, capture it earlier if needed.
+                result = (*result[:4], self.current.get("seconds", 0), result[5])
+            else:
+                self.current["seconds"] = seconds
             if status != "completed":
                 raise SimulationIncomplete(f"Simulation {simulation_id} ended as {status}; no complete score was produced.")
             self.current.update(results_status="complete", scoring_status="complete")
@@ -284,6 +290,8 @@ class RunEvidence:
                     self.freya.get_call(call_id)
                 except Exception as error:
                     self.report["transcript_errors"].append({"call_id": call_id, "error": redact(str(error))})
+            if self.resume:
+                self.current["recovery_seconds"] = round(time.monotonic() - recovery_started, 2)
             self.save()
 
 
@@ -380,6 +388,16 @@ def main():
         parser.error("Set FREYA_API_KEY in build-the-builder/env.sh")
     if len(os.environ.get("FREYA_BANK_TEAM_KEY", "")) < 16:
         parser.error("FREYA_BANK_TEAM_KEY must contain at least 16 characters")
+    try:
+        lock = acquire_test_lock()
+    except RuntimeError as error:
+        print("INCOMPLETE:", redact(str(error)), file=sys.stderr)
+        return 2
+    with contextlib.closing(lock) if lock else contextlib.nullcontext():
+        return run(args, parser)
+
+
+def run(args, parser):
     report = None
     if args.resume:
         if any(value is not None for value in (args.brief, args.only, args.style, args.reps, args.cases)):
@@ -449,11 +467,9 @@ def main():
         sys.argv += ["--style", args.style]
     print("Output:", folder, flush=True)
     exit_code = 0
-    lock = None
     with (folder / "console.log").open("a" if args.resume else "w") as log:
         with contextlib.redirect_stdout(Tee(sys.stdout, log)), contextlib.redirect_stderr(Tee(sys.stderr, log)):
             try:
-                lock = acquire_test_lock()
                 freya.api = evidence.api
                 run_cases.main()
                 results = json.loads((folder / "official-results.json").read_text())
@@ -478,8 +494,6 @@ def main():
                 freya.api = original_api
                 freya.run_simulation, freya.create_personas = original_simulation, original_personas
                 score.http, run_cases.http = original_score_http, original_runner_http
-                if lock:
-                    lock.close()
     report["ended_at"] = now()
     evidence.save()
     print("Summary:", folder / "summary.json", flush=True)

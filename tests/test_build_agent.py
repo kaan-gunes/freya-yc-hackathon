@@ -128,7 +128,7 @@ class BuildAgentChecks(unittest.TestCase):
             local = {"ok": True, "valid": True, "errors": [], "checks": []}
             error = "POST /api/v2/workflow -> 400: Missing workflow.tools.0.function.description"
             with patch.object(runner, "KIT", kit), patch.object(runner, "invoke", invoke), \
-                    patch("builder.validation.validate", side_effect=lambda *args: copy.deepcopy(local)) as local_validation, \
+                    patch("builder.validation.validate", side_effect=lambda *args, **kwargs: copy.deepcopy(local)) as local_validation, \
                     patch("freya.validate_workflow", side_effect=[RuntimeError(error)] * dry_run_rejections + [{"ok": True}]) as dry_run, \
                     patch("freya.save_workflow", side_effect=save) as save_workflow, \
                     patch("freya.workspace_id", return_value="mock-workspace"), \
@@ -143,6 +143,7 @@ class BuildAgentChecks(unittest.TestCase):
                 self.assertEqual(local_validation.call_args.args[0], expected_workflow)
                 self.assertEqual(local_validation.call_args.args[1], candidate["policy"])
                 self.assertEqual(local_validation.call_args.args[3], expected_checks)
+                self.assertEqual(local_validation.call_args.kwargs["brief_lines"], {str(brief): ["1. Synthetic rule"]})
             folder = next((kit / "out").iterdir())
             manifest = json.loads((folder / "manifest.json").read_text())
             self.assertEqual(manifest["status"], "completed")

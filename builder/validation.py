@@ -379,7 +379,44 @@ def _condition(condition, state):
     raise ValueError(f"unsupported transition in independent chain: {operator}")
 
 
-def _independent_checks(nodes, snippets, security, checks):
+def _identity_requirements(policy, brief_lines):
+    rules = {rule["id"]: rule for rule in policy.get("source_rules", []) if isinstance(rule, dict) and isinstance(rule.get("id"), str)}
+    sources = {name: rule.get("text", "") for name, rule in rules.items()}
+    if brief_lines is not None:
+        sources = {}
+        for name, rule in rules.items():
+            lines = brief_lines.get(rule.get("source"), [])
+            line = rule.get("line")
+            if type(line) is int and 1 <= line <= len(lines):
+                end = next((index for index in range(line, len(lines)) if re.match(r"^\s*(?:\d+\.\s|#{1,6}\s)", lines[index])), len(lines))
+                sources[name] = "\n".join(lines[line - 1:end])
+    patterns = {
+        "date": r"\b(?:date of birth|birth date|birthdate|dob)\b",
+        "numeric_code": r"\b(?:last (?:\w+|[0-9]+) digits|numeric (?:code|answer)|(?:[0-9]+|four|six)[ -]digit (?:code|pin)|pin code)\b",
+    }
+    required = set()
+    counts = {}
+    # shortcut: count explicit English "ask N security questions", extend only for a new supplied brief format.
+    count_pattern = r"\bask\s+(one|two|three|four|[0-9]+)\s+security questions?\b"
+    numbers = {"one": 1, "two": 2, "three": 3, "four": 4}
+    for name, text in sources.items():
+        if rules[name].get("stage") != "identity" and not re.search(count_pattern, text, re.I):
+            continue
+        required_text = re.sub(r"\b(?:never|do not|don't)\s+ask[^.!?]*(?:[.!?]|$)", "", text, flags=re.I)
+        required.update(kind for kind, pattern in patterns.items() if re.search(pattern, required_text, re.I))
+        count = re.search(count_pattern, text, re.I)
+        if count:
+            word = count[1].lower()
+            counts[name] = numbers.get(word, int(word) if word.isdigit() else 0)
+    if brief_lines is not None:
+        for lines in brief_lines.values():
+            for text in lines:
+                if re.search(count_pattern, text, re.I) and not any(text in source for source in sources.values()):
+                    raise ValueError("identity_questions omitted a required identity source rule")
+    return sources, required, counts, patterns
+
+
+def _independent_checks(nodes, snippets, security, checks, policy=None, openapi=None, brief_lines=None, close_tool=None):
     """Use declared synthetic inputs, but keep every expected invariant in the builder."""
     reports = []
     roles = security.get("validation_state", {})
@@ -393,7 +430,7 @@ def _independent_checks(nodes, snippets, security, checks):
     third_party_fixture = security.get("validation_third_party_fixture", {})
     identity_answer_fixture = security.get("validation_identity_answer_fixture", {})
     identity_code_fixture = security.get("validation_identity_code_fixture", {})
-    required_roles = ("proposed_amount", "proposed_date", "approval_event", "correction", "decision_event", "decision_date", "decision_amount", "full_amount", "identity_answer", "speech_text", "persuasion_attempts", "party_confirmation", "recorded", "offer_fingerprint", "readback_fingerprint", "exception", "route", "stage", "write_attempts", "write_result")
+    required_roles = ("proposed_amount", "proposed_date", "approval_event", "approval_amount", "approval_date", "approval_text", "correction", "decision_event", "decision_date", "decision_amount", "full_amount", "identity_answer", "speech_text", "persuasion_attempts", "party_confirmation", "recorded", "offer_fingerprint", "readback_fingerprint", "exception", "route", "stage", "write_attempts", "write_result")
     for label, data, names in (("validation_state", roles, required_roles), ("validation_events", events, ("yes", "no", "question", "human", "plan", "hardship", "dispute", "third_party")), ("validation_routes", routes, ("account", "confirmation", "record", "offer", "transfer", "end"))):
         if not isinstance(data, dict) or any(not isinstance(data.get(name), str) or not data[name] for name in names):
             return [{"name": "independent_contract", "ok": False, "error": f"security.{label} needs every declared string role"}]
@@ -403,6 +440,43 @@ def _independent_checks(nodes, snippets, security, checks):
         return [{"name": "independent_contract", "ok": False, "error": "independent checks need offer, confirmation and identity input fixtures"}]
     trusted = set(security.get("trusted_variables", []))
     contract_errors = []
+    source_texts = [line for lines in brief_lines.values() for line in lines] if brief_lines is not None else [rule.get("text", "") for rule in (policy or {}).get("source_rules", [])]
+    if any(re.search(r"\bif it fails\s*,\s*try once more\b", text, re.I) for text in source_texts) and security.get("write_attempt_limit") != 2:
+        contract_errors.append("write_attempt_limit must preserve the source-required second attempt")
+    promise_fields = security.get("promise_request_fields", {})
+    if not isinstance(promise_fields, dict) or set(promise_fields) != {"amount", "date"} or any(not isinstance(value, str) or not value for value in promise_fields.values()) or len(set(promise_fields.values())) != 2:
+        contract_errors.append("promise_request_fields must map amount/date to distinct actual API properties")
+    questions = security.get("identity_questions", [])
+    identity_kinds = set()
+    try:
+        sources, required_kinds, required_counts, kind_patterns = _identity_requirements(policy or {}, brief_lines)
+        if not isinstance(questions, list) or not questions:
+            raise ValueError("identity_questions must explicitly declare every source-required question")
+        contexts = []
+        for question in questions:
+            if not isinstance(question, dict) or question.get("kind") not in (*kind_patterns, "text"):
+                raise ValueError("identity_questions need a date, numeric_code or text kind")
+            kind, source = question["kind"], question.get("source_rule")
+            text = question.get("source_text")
+            if not isinstance(text, str) or not text.strip() or text not in sources.get(source, ""):
+                raise ValueError("identity_questions must quote the actual source rule for each required question")
+            if kind in kind_patterns and not re.search(kind_patterns[kind], text, re.I):
+                raise ValueError("identity_questions kind must match its source question text")
+            context = question.get("request_context")
+            if not isinstance(context, dict) or not context or context in contexts:
+                raise ValueError("identity_questions need distinct actual pending-question request contexts")
+            contexts.append(context)
+            identity_kinds.add(kind)
+        if not required_kinds <= identity_kinds:
+            raise ValueError("identity_questions omitted a required identity question type")
+        for source, count in required_counts.items():
+            if sum(question.get("source_rule") == source for question in questions) != count:
+                raise ValueError("identity_questions omitted or added a question required by the source count")
+        for kind, context in (("date", security.get("validation_identity_request_context")), ("numeric_code", security.get("validation_identity_code_request_context"))):
+            if kind in identity_kinds and [question["request_context"] for question in questions if question["kind"] == kind] != [context]:
+                raise ValueError(f"identity_questions {kind} must match the actual validation request context")
+    except (ValueError, TypeError, KeyError) as exc:
+        contract_errors.append(str(exc))
     for label, data, required in (("confirmation", confirmation, True), ("correction", correction_fixture, True), ("identity resume", identity_resume, False)):
         if not isinstance(data, dict) or required and not data:
             contract_errors.append(f"{label} fixture must provide fresh speech inputs")
@@ -448,21 +522,23 @@ def _independent_checks(nodes, snippets, security, checks):
     if isinstance(third_party_fixture, dict) and not any(third_party_fixture.get(name) for name in decision_inputs - {roles["decision_event"]}):
         contract_errors.append("third-party fixture needs a nonempty actual speech field besides decision_event")
     canonical_identity_answer = None
-    try:
-        if not isinstance(identity_answer_fixture, dict) or not identity_answer_fixture.get(roles["stage"]):
-            raise ValueError("identity answer fixture needs current pre-verification state")
-        canonical_identity_answer = identity_answer_fixture.get(roles["identity_answer"])
-        if not isinstance(canonical_identity_answer, str) or datetime.date.fromisoformat(canonical_identity_answer).isoformat() != canonical_identity_answer:
-            raise ValueError("identity answer fixture needs a valid canonical ISO raw answer")
-    except (TypeError, ValueError) as exc:
-        contract_errors.append(f"validation_identity_answer_fixture: {exc}")
+    if "date" in identity_kinds:
+        try:
+            if not isinstance(identity_answer_fixture, dict) or not identity_answer_fixture.get(roles["stage"]):
+                raise ValueError("identity answer fixture needs current pre-verification state")
+            canonical_identity_answer = identity_answer_fixture.get(roles["identity_answer"])
+            if not isinstance(canonical_identity_answer, str) or datetime.date.fromisoformat(canonical_identity_answer).isoformat() != canonical_identity_answer:
+                raise ValueError("identity answer fixture needs a valid canonical ISO raw answer")
+        except (TypeError, ValueError) as exc:
+            contract_errors.append(f"validation_identity_answer_fixture: {exc}")
     canonical_identity_code = None
-    if not isinstance(identity_code_fixture, dict) or not identity_code_fixture.get(roles["stage"]):
-        contract_errors.append("validation_identity_code_fixture needs current pending-code identity state")
-    else:
-        canonical_identity_code = identity_code_fixture.get(roles["speech_text"])
-        if not isinstance(canonical_identity_code, str) or not re.fullmatch(r"0[0-9]+", canonical_identity_code):
-            contract_errors.append("validation_identity_code_fixture needs a canonical numeric string in speech_text with a leading zero")
+    if "numeric_code" in identity_kinds:
+        if not isinstance(identity_code_fixture, dict) or not identity_code_fixture.get(roles["stage"]):
+            contract_errors.append("validation_identity_code_fixture needs current pending-code identity state")
+        else:
+            canonical_identity_code = identity_code_fixture.get(roles["speech_text"])
+            if not isinstance(canonical_identity_code, str) or not re.fullmatch(r"0[0-9]+", canonical_identity_code):
+                contract_errors.append("validation_identity_code_fixture needs a canonical numeric string in speech_text with a leading zero")
     verification_requests = [(identifier, tool) for identifier, node in nodes.items() for tool in node.get("pre_actions", []) if tool.get("function", {}).get("name") in security.get("verification_tools", ["verify_identity"])]
     answer_request_field = security.get("identity_answer_request_field")
     if not isinstance(answer_request_field, str) or not answer_request_field or answer_request_field == security.get("customer_id_field") or not any(answer_request_field in tool.get("function", {}).get("parameters", {}).get("properties", {}).get("body", {}).get("properties", {}) for _, tool in verification_requests):
@@ -483,19 +559,41 @@ def _independent_checks(nodes, snippets, security, checks):
             if "enum" in field and not any(_json_equal(value, operand) for operand in field["enum"]):
                 return False
         return True
-    for label, context in (("validation_identity_request_context", identity_request_context), ("validation_identity_code_request_context", identity_code_context)):
+    contexts_to_check = [("identity_questions", question.get("request_context")) for question in questions]
+    if "date" in identity_kinds:
+        contexts_to_check.append(("validation_identity_request_context", identity_request_context))
+    if "numeric_code" in identity_kinds:
+        contexts_to_check.append(("validation_identity_code_request_context", identity_code_context))
+    for label, context in contexts_to_check:
         if not isinstance(context, dict) or not context:
             contract_errors.append(f"{label} must declare the pending question's request properties")
         elif any(not isinstance(name, str) or not name or name in (security.get("customer_id_field"), answer_request_field) or not isinstance(value, (str, int, float, bool)) or isinstance(value, str) and "{{" in value for name, value in context.items()):
             contract_errors.append(f"{label} needs literal values and cannot include customer or answer fields")
         elif not any(context_schema_matches(tool, context) for _, tool in verification_requests):
             contract_errors.append(f"{label} must match real verification request property types and enums")
+    for question in questions:
+        if question.get("kind") == "text":
+            question_fixture = question.get("fixture", {})
+            if not isinstance(question_fixture, dict) or not question_fixture.get(roles["stage"]) or not isinstance(question_fixture.get(roles["identity_answer"]), str) or not question_fixture[roles["identity_answer"]].strip():
+                contract_errors.append("identity_questions text fixture needs a pending question and a nonempty synthetic raw answer")
     offer, approval = security.get("offer_guard_node"), security.get("approval_guard_node")
     record_nodes = security.get("record_nodes", [])
     readbacks = security.get("confirmation_nodes", [])
+    approval_inputs = {field.get("name") for name in readbacks for field in nodes.get(name, {}).get("extraction_schema", [])}
+    if not {roles[name] for name in ("approval_event", "approval_amount", "approval_date", "approval_text", "correction")} <= approval_inputs - trusted:
+        contract_errors.append("approval roles must name fresh confirmation extraction fields")
+    result_node = security.get("record_result_node")
+    if nodes.get(result_node, {}).get("node_type") != "code" or nodes[result_node].get("passthrough") is not True:
+        contract_errors.append("record_result_node must name the shared passthrough result-processing code node")
+    for name in record_nodes:
+        transitions = nodes.get(name, {}).get("transitions", [])
+        if len(transitions) != 1 or transitions[0].get("target_node") != result_node or transitions[0].get("condition") != {"operator": "always"}:
+            contract_errors.append(f"{name}: success and error must always reach record_result_node")
+        if any(nodes[name].get(key, result_node) != result_node for key in ("passthrough_default_transition", "max_turn_transition")):
+            contract_errors.append(f"{name}: record fallback must also reach record_result_node")
     for identifier, required_reads, required_writes in (
         (offer, ("proposed_amount", "proposed_date"), ("offer_fingerprint", "readback_fingerprint")),
-        (approval, ("approval_event", "correction", "recorded", "offer_fingerprint", "readback_fingerprint", "write_attempts", "write_result"), ("route", "write_attempts")),
+        (approval, ("approval_event", "approval_amount", "approval_date", "approval_text", "correction", "recorded", "offer_fingerprint", "readback_fingerprint", "write_attempts", "write_result"), ("route", "write_attempts", "approval_event", "approval_amount", "approval_date", "approval_text", "correction")),
         (decision, ("decision_event", "decision_date", "decision_amount", "full_amount", "identity_answer", "speech_text", "persuasion_attempts", "party_confirmation"), ("decision_event", "decision_date", "decision_amount", "identity_answer", "speech_text", "persuasion_attempts", "party_confirmation")),
     ):
         if identifier not in snippets:
@@ -558,9 +656,31 @@ def _independent_checks(nodes, snippets, security, checks):
         state[roles["approval_event"]] = events["yes"]
         return advance(approval, state)
 
-    def bound_request(target, state):
+    def next_node(identifier, state):
+        target = next((item["target_node"] for item in nodes[identifier].get("transitions", []) if _condition(item.get("condition", {}), state)), None)
+        if target not in nodes:
+            raise ValueError("record result has no deterministic next node")
+        return target
+
+    def complete_record(target, state, result, skip_post=False):
+        # The platform exposes node response keys even when its error path skips the hook.
+        state = copy.deepcopy(state)
+        prefix = target + "_response."
+        for name in ("status", "status_code", "message"):
+            if name in result:
+                state[prefix + name] = str(result[name])
+        for name, value in result.get("data", {}).items() if isinstance(result.get("data"), dict) else ():
+            state[prefix + "data." + name] = str(value).lower() if isinstance(value, bool) else value
+        counter = target + ("_failure_count" if result.get("status") == "error" else "_success_count")
+        state[counter] = int(state.get(counter, 0)) + 1
+        hook = f"{target}:create_promise:post"
+        if not skip_post and hook in snippets:
+            state = step(hook, state, result)
+        return advance(next_node(target, state), state)
+
+    def bound_request(target, state, tools=None):
         bodies = []
-        for tool in nodes[target].get("pre_actions", []):
+        for tool in nodes[target].get("pre_actions", []) if tools is None else tools:
             body = tool.get("function", {}).get("parameters", {}).get("properties", {}).get("body", {})
             values = {}
             for name, field in body.get("properties", {}).items():
@@ -625,7 +745,7 @@ def _independent_checks(nodes, snippets, security, checks):
         if target not in record_nodes or state.get(authorization) != authorized:
             raise ValueError("valid current yes did not reach an authorized record action")
         bound_request(target, state)
-        state = step(f"{target}:create_promise:post", state, {"status": "success", "status_code": 200, "data": {"ok": True}})
+        state, _ = complete_record(target, state, {"status": "success", "status_code": 200, "data": {"ok": True}})
         if state.get(roles["recorded"]) != "recorded":
             raise ValueError("successful business result did not mark the current product recorded")
         state, target = confirm(state)
@@ -651,12 +771,12 @@ def _independent_checks(nodes, snippets, security, checks):
         if target not in record_nodes or state.get(authorization) != authorized:
             raise ValueError("amount readback and current yes did not authorize a record action")
         requests = bound_request(target, state)
-        matching_amounts = [body for name, body in requests if name == "create_promise" and _json_equal(body.get("amount"), expected_amount)]
+        matching_amounts = [body for name, body in requests if name == "create_promise" and _json_equal(body.get(promise_fields["amount"]), expected_amount)]
         if not matching_amounts:
             raise ValueError("amount promise did not bind the original numeric amount")
-        if expected_date is not None and not any(body.get("date") == expected_date for body in matching_amounts):
+        if expected_date is not None and not any(body.get(promise_fields["date"]) == expected_date for body in matching_amounts):
             raise ValueError("promise did not bind the original canonical date")
-        state = step(f"{target}:create_promise:post", state, {"status": "success", "status_code": 200, "data": {"ok": True}})
+        state, _ = complete_record(target, state, {"status": "success", "status_code": 200, "data": {"ok": True}})
         if state.get(roles["recorded"]) != "recorded":
             raise ValueError("successful amount result did not mark the product recorded")
 
@@ -705,6 +825,21 @@ def _independent_checks(nodes, snippets, security, checks):
         run(f"independent_{label}_weekday_ordinal_record", lambda current=current: weekday_ordinal_record(current))
         run(f"independent_{label}_mismatched_weekday_denied", lambda current=current: mismatched_weekday(current))
 
+    payment_month = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December")[proposal_day.month - 1]
+
+    def month_day_record(raw, current):
+        state = full_amount_state(events["yes"], str(full_amount)) if current else copy.deepcopy(fixture)
+        state[roles["decision_date"] if current else roles["proposed_date"]] = raw
+        expected_amount = full_amount if current else float(fixture[roles["proposed_amount"]])
+        state = valid_readback(state, decision if current else offer)
+        record_amount(state, expected_amount, proposal_day.isoformat())
+
+    for current, label in ((True, "current"), (False, "shared")):
+        for form, raw in (("day_first", f"{proposal_day.day} {payment_month}"),
+                          ("month_first", f"{payment_month} {proposal_day.day}{proposal_suffix}"),
+                          ("of_month", f"the {proposal_day.day}{proposal_suffix} of {payment_month}")):
+            run(f"independent_{label}_payment_month_day_{form}", lambda raw=raw, current=current: month_day_record(raw, current))
+
     def inactive_full_amount(event):
         state, target = advance(decision, full_amount_state(event), (offer, *readbacks, *record_nodes, *security.get("account_nodes", [])))
         assert_denied(state)
@@ -741,6 +876,38 @@ def _independent_checks(nodes, snippets, security, checks):
             raise ValueError("fresh explicit yes after correction could not record")
     run("independent_correction_requires_readback", corrected)
 
+    def unmarked_correction(field, marker):
+        state = valid_readback()
+        original = state[roles["offer_fingerprint"]]
+        changed_amount = full_amount if float(fixture[roles["proposed_amount"]]) != float(full_amount) else float(full_amount) + 1
+        value = str(changed_amount) if field == "amount" else (proposal_day + datetime.timedelta(days=1)).isoformat()
+        state.update(copy.deepcopy(confirmation))
+        state[roles["approval_event"]] = events["yes"]
+        state[roles["correction"]] = marker
+        state[roles["approval_" + field]] = value
+        state[roles["approval_text"]] = f"Yes, use {value}."
+        state = step(approval, state)
+        assert_denied(state)
+        if state.get(roles["readback_fingerprint"]) or state.get(roles["offer_fingerprint"]):
+            raise ValueError("changed current approval retained the old readback authorization")
+        proposed = state.get(roles["proposed_" + field])
+        if (field == "amount" and float(proposed) != float(value)) or (field == "date" and proposed != value):
+            raise ValueError("changed current approval did not carry its new value to offer validation")
+        target = next_node(approval, state)
+        if target != offer:
+            raise ValueError("changed current approval did not reach the shared offer guard")
+        state, target = advance(target, state)
+        assert_denied(state)
+        if target in readbacks:
+            fingerprint = state.get(roles["readback_fingerprint"])
+            if not fingerprint or fingerprint == original or fingerprint != state.get(roles["offer_fingerprint"]):
+                raise ValueError("changed current approval did not produce a fresh matching readback")
+        elif target not in security.get("close_nodes", []) and (nodes[target].get("node_type") != "conversation" or not nodes[target].get("extraction_schema")):
+            raise ValueError("invalid changed approval did not stop for clarification or safe closure")
+    for field in ("amount", "date"):
+        for marker, label in (("", "missing"), ("no", "wrong")):
+            run(f"independent_approval_{field}_{label}_correction_marker", lambda field=field, marker=marker: unmarked_correction(field, marker))
+
     def rejected(event):
         state = valid_readback()
         state.update(copy.deepcopy(confirmation))
@@ -771,18 +938,28 @@ def _independent_checks(nodes, snippets, security, checks):
     for event in ("human", "plan", "dispute"):
         run(f"independent_{event}_with_correction", lambda event=event: exception(event))
 
-    def record_result(result, unknown=False):
-        state, target = confirm(valid_readback())
+    def record_result(result, unknown=False, skip_post=False, stale=False):
+        state = valid_readback()
+        if stale:
+            for name in record_nodes:
+                state.update({name + "_response.status": "error", name + "_response.status_code": "500", name + "_response.data.ok": "true", name + "_response.message": "Nothing was recorded. The call may be repeated.", name + "_failure_count": 8})
+        state, target = confirm(state)
         if target not in record_nodes:
             raise ValueError("failure check could not reach record action")
-        state = step(f"{target}:create_promise:post", state, result)
+        state, target = complete_record(target, state, result, skip_post)
         if state.get(roles["recorded"]) == "recorded":
             raise ValueError("failed/unknown business result marked current product recorded")
         if unknown:
-            state = step(approval, state)
             assert_denied(state)
+            if (target in record_nodes or
+                    nodes[target].get("node_type") == "api_request" and target not in security.get("close_nodes", []) or
+                    int(state.get(roles["write_attempts"], 0)) != 1):
+                raise ValueError("unknown current write result retried the bank action")
     run("independent_failed_record", lambda: record_result({"status": "success", "status_code": 200, "data": {"ok": False}}))
-    run("independent_unknown_record_no_retry", lambda: record_result({"status": "error", "error": "timeout"}, True))
+    run("independent_unknown_record_no_retry", lambda: record_result({"status": "error", "message": "timeout"}, True, True))
+    run("independent_stale_record_status_no_retry", lambda: record_result({"status": "error", "message": "timeout"}, True, True, True))
+    run("independent_missing_record_status_no_retry", lambda: record_result({}, True, True, True))
+    run("independent_missing_record_body_no_retry", lambda: record_result({"status": "success", "status_code": 200}, True, True, True))
 
     def retry_limit():
         limit = security.get("write_attempt_limit")
@@ -790,18 +967,67 @@ def _independent_checks(nodes, snippets, security, checks):
             raise ValueError("security.write_attempt_limit must be a positive integer")
         state, target = confirm(valid_readback())
         failure = {"status": "success", "status_code": 200, "data": {"ok": False}}
-        state = step(f"{target}:create_promise:post", state, failure)
+        state, target = complete_record(target, state, failure)
         if limit > 1:
-            state = step(approval, state)
-            if state.get(authorization) != authorized or int(state.get(roles["write_attempts"], 0)) != 2:
+            if target not in record_nodes or state.get(authorization) != authorized or int(state.get(roles["write_attempts"], 0)) != 2:
                 raise ValueError("allowed retry did not preserve authorization and count one new attempt")
-            state = step(f"{target}:create_promise:post", state, failure)
-        state[roles["write_attempts"]] = limit
-        state = step(approval, state)
+            state, target = complete_record(target, state, failure)
         assert_denied(state)
+        if target in record_nodes:
+            raise ValueError("failed record exceeded source write attempt limit")
         if int(state.get(roles["write_attempts"], 0)) > limit:
             raise ValueError("failed record exceeded source write attempt limit")
     run("independent_failed_record_retry_limit", retry_limit)
+
+    def sourced_error_statuses():
+        statuses = set()
+        for path, item in (openapi or {}).get("paths", {}).items():
+            for method, raw_operation in _resolve(item, openapi).items():
+                if method.lower() != "post":
+                    continue
+                operation = _resolve(raw_operation, openapi)
+                if operation.get("operationId", path.strip("/").replace("/", "_")) != "create_promise":
+                    continue
+                for code, response in operation.get("responses", {}).items():
+                    description = _resolve(response, openapi).get("description", "").lower()
+                    if str(code).isdigit() and 400 <= int(code) < 600 and re.search(r"nothing (?:was|is) recorded", description) and re.search(r"(?:call may be repeated|may be retried|retry is permitted)", description):
+                        statuses.add(str(code))
+        return statuses
+
+    def error_retry(status_code, allowed, recovered=False):
+        limit = security.get("write_attempt_limit")
+        state, target = confirm(valid_readback())
+        if target not in record_nodes:
+            raise ValueError("error replay could not reach the real record action")
+        approved_request = bound_request(target, state)
+        failure = {"status": "error", "status_code": int(status_code), "message": "API write failed"}
+        state, target = complete_record(target, state, failure, skip_post=True)
+        if state.get(roles["recorded"]) == "recorded":
+            raise ValueError("API error with skipped hook marked the promise recorded")
+        if allowed and limit > 1:
+            if target not in record_nodes or state.get(authorization) != authorized or int(state.get(roles["write_attempts"], 0)) != 2:
+                raise ValueError("sourced no-write API error with skipped hook did not reach the permitted retry")
+            if bound_request(target, state) != approved_request:
+                raise ValueError("retry changed the immutable approved bank request")
+            if recovered:
+                state, target = complete_record(target, state, {"status": "success", "status_code": 200, "data": {"ok": True}})
+                if state.get(roles["recorded"]) != "recorded":
+                    raise ValueError("successful second attempt did not mark the promise recorded")
+            else:
+                state, target = complete_record(target, state, failure, skip_post=True)
+        assert_denied(state)
+        if (target in record_nodes or
+                nodes[target].get("node_type") == "api_request" and target not in security.get("close_nodes", []) or
+                int(state.get(roles["write_attempts"], 0)) > min(limit, 2)):
+            raise ValueError("API error exceeded the one permitted retry or retried without a no-write guarantee")
+    safe_statuses = sourced_error_statuses()
+    for status in sorted(safe_statuses):
+        run(f"independent_api_error_{status}_skipped_hook_retry", lambda status=status: error_retry(status, True))
+        if security.get("write_attempt_limit", 1) > 1:
+            run(f"independent_api_error_{status}_skipped_hook_then_success", lambda status=status: error_retry(status, True, True))
+    for status in ("500", "504"):
+        if status not in safe_statuses:
+            run(f"independent_api_error_{status}_without_no_write_guarantee", lambda status=status: error_retry(status, False))
 
     def identity_return():
         state = copy.deepcopy(identity)
@@ -847,6 +1073,55 @@ def _independent_checks(nodes, snippets, security, checks):
             raise ValueError("missing speech consumed a persuasion attempt")
     run("independent_missing_decision_speech", missing_speech)
 
+    privacy_rules = [rule.get("text", "") for rule in (policy or {}).get("source_rules", [])
+                     if rule.get("stage") == "identity" and "before identity" in rule.get("text", "").lower()]
+    privacy_rules += [line for lines in (brief_lines or {}).values() for line in lines if "before identity" in line.lower()]
+    forbidden_words = [word for text in privacy_rules for word in re.findall(r'["“]([^"”]+)["”]', text.lower().split("before identity")[0].split("do not say")[-1])]
+
+    def identity_close_body(state):
+        if not close_tool:
+            raise ValueError("pre-identity check needs the actual close action")
+        state = dict(state)
+        state.setdefault(security["customer_id_variable"], fixture[security["customer_id_variable"]])
+        body = bound_request("workflow", state, [close_tool])[0][1]
+        hook = next((code for code, operation, kind in snippets.values() if operation == "close_call" and kind == "pre"), "")
+        if hook:
+            body = _run_check(hook, {"vars": state, "config": {"body": body}, "expected": {}})["config"]["body"]
+        return {name: body.get(name) for name in ("outcome", "reason")}
+
+    def pre_identity_exception(event, human=False):
+        state = copy.deepcopy(security.get("validation_pre_identity_human_fixture") if human else third_party_fixture)
+        if not isinstance(state, dict) or not state:
+            raise ValueError("pre-identity human fixture must contain a current insisting request")
+        state[security.get("bank_verification_variable")] = "unverified"
+        state[authorization] = ""
+        baseline = copy.deepcopy(state)
+        for field in decision_inputs:
+            baseline[field] = ""
+        baseline = step(decision, baseline)
+        state[roles["decision_event"]] = event
+        state, target = advance(decision, state, (offer, *readbacks, *record_nodes, *security.get("account_nodes", []), *(identifier for identifier, _ in verification_requests)))
+        assert_denied(state)
+        node = nodes[target]
+        speech = node.get("on_enter", {}).get("text", "")
+        if node.get("node_type") == "end_call":
+            speech += " " + node.get("terminal", {}).get("function", {}).get("parameters", {}).get("properties", {}).get("spoken_message", {}).get("default", "")
+        speech = re.sub(r'\{\{([\w.]+)(?::json)?\}\}', lambda match: str(state.get(match.group(1), "")), speech)
+        if any(re.search(r'\b' + re.escape(word) + r'\w*\b', speech, re.I) for word in forbidden_words):
+            raise ValueError("pre-identity exception emitted source-forbidden speech")
+        if human:
+            if node.get("node_type") != "api_request" or not any(name == "transfer_to_agent" for name, _ in bound_request(target, state)):
+                raise ValueError("permitted pre-identity human request did not reach a guarded transfer")
+        elif node.get("node_type") != "conversation" or not node.get("extraction_schema"):
+            raise ValueError("account-specific pre-identity claim must return to an identity listener, without an account closing outcome")
+        elif identity_close_body(state) != identity_close_body(baseline):
+            raise ValueError("pre-identity claim changed the actual stage-safe close outcome/reason")
+
+    if forbidden_words:
+        for name in ("paid", "dispute", "plan"):
+            run(f"independent_pre_identity_{name}", lambda name=name: pre_identity_exception(events[name]))
+        run("independent_pre_identity_human", lambda: pre_identity_exception(events["human"], True))
+
     def identity_state(input_fixture=identity_answer_fixture):
         state = copy.deepcopy(input_fixture)
         state[security.get("bank_verification_variable")] = "unverified"
@@ -876,99 +1151,101 @@ def _independent_checks(nodes, snippets, security, checks):
         if not any(all(name in body and _json_equal(body[name], value) for name, value in request_context.items()) for body in canonical_requests):
             raise ValueError(f"spoken identity {label} request did not match the declared pending-question context")
 
-    def identity_date_answer(raw_answer, main_date=None):
-        field, value = (roles["identity_answer"], raw_answer) if main_date is None else (roles["decision_date"], main_date)
-        state = current_identity_state(identity_answer_fixture, field, value)
-        identity_request_boundary(state, canonical_identity_answer, identity_request_context, "date")
-    day = datetime.date.fromisoformat(canonical_identity_answer)
-    month = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December")[day.month - 1]
-    suffix = "th" if 11 <= day.day % 100 <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(day.day % 10, "th")
-    for label, answer in (
-        ("day_first", f"{day.day} {month} {day.year:04d}"),
-        ("month_first", f"{month} {day.day} {day.year:04d}"),
-        ("ordinal_day", f"{day.day}{suffix} {month} {day.year:04d}"),
-        ("ordinal_month_comma", f"{month} {day.day}{suffix}, {day.year:04d}"),
-        ("upper_case", f"{day.day} {month.upper()} {day.year:04d}"),
-        ("lower_case_comma", f"{month.lower()} {day.day}, {day.year:04d}"),
-    ):
-        run(f"independent_identity_date_words_{label}", lambda answer=answer: identity_date_answer(answer))
-    run("independent_identity_date_in_main_date", lambda: identity_date_answer("", f"{day.day} {month} {day.year:04d}"))
-    for label, speech in (
-        ("period", f"{day.day} {month} {day.year:04d}."),
-        ("period_underscore", f"{day.day} {month} {day.year:04d}._"),
-        ("prefix", f"My date of birth is {day.day} {month} {day.year:04d}."),
-    ):
-        run(f"independent_identity_date_in_speech_text_{label}", lambda speech=speech: identity_request_boundary(current_identity_state(identity_answer_fixture, roles["speech_text"], speech), canonical_identity_answer, identity_request_context, "date"))
-
     small_words = "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen".split()
-    tens_words = "zero ten twenty thirty forty fifty sixty seventy eighty ninety".split()
-    ordinal_words = "zero first second third fourth fifth sixth seventh eighth ninth tenth eleventh twelfth thirteenth fourteenth fifteenth sixteenth seventeenth eighteenth nineteenth".split()
+    if "date" in identity_kinds:
+        def identity_date_answer(raw_answer, main_date=None):
+            field, value = (roles["identity_answer"], raw_answer) if main_date is None else (roles["decision_date"], main_date)
+            state = current_identity_state(identity_answer_fixture, field, value)
+            identity_request_boundary(state, canonical_identity_answer, identity_request_context, "date")
+        day = datetime.date.fromisoformat(canonical_identity_answer)
+        month = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December")[day.month - 1]
+        suffix = "th" if 11 <= day.day % 100 <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(day.day % 10, "th")
+        for label, answer in (
+            ("day_first", f"{day.day} {month} {day.year:04d}"),
+            ("month_first", f"{month} {day.day} {day.year:04d}"),
+            ("ordinal_day", f"{day.day}{suffix} {month} {day.year:04d}"),
+            ("ordinal_month_comma", f"{month} {day.day}{suffix}, {day.year:04d}"),
+            ("upper_case", f"{day.day} {month.upper()} {day.year:04d}"),
+            ("lower_case_comma", f"{month.lower()} {day.day}, {day.year:04d}"),
+        ):
+            run(f"independent_identity_date_words_{label}", lambda answer=answer: identity_date_answer(answer))
+        run("independent_identity_date_in_main_date", lambda: identity_date_answer("", f"{day.day} {month} {day.year:04d}"))
+        for label, speech in (
+            ("period", f"{day.day} {month} {day.year:04d}."),
+            ("period_underscore", f"{day.day} {month} {day.year:04d}._"),
+            ("prefix", f"My date of birth is {day.day} {month} {day.year:04d}."),
+        ):
+            run(f"independent_identity_date_in_speech_text_{label}", lambda speech=speech: identity_request_boundary(current_identity_state(identity_answer_fixture, roles["speech_text"], speech), canonical_identity_answer, identity_request_context, "date"))
 
-    def small_number_words(number):
-        return small_words[number] if number < 20 else tens_words[number // 10] + (" " + small_words[number % 10] if number % 10 else "")
+        tens_words = "zero ten twenty thirty forty fifty sixty seventy eighty ninety".split()
+        ordinal_words = "zero first second third fourth fifth sixth seventh eighth ninth tenth eleventh twelfth thirteenth fourteenth fifteenth sixteenth seventeenth eighteenth nineteenth".split()
 
-    def cardinal_year_words(year):
-        parts = []
-        if year // 1000:
-            parts.append(small_words[year // 1000] + " thousand")
-        if year % 1000 // 100:
-            parts.append(small_words[year % 1000 // 100] + " hundred")
-        if year % 100:
-            parts.append(("and " if parts else "") + small_number_words(year % 100))
-        return " ".join(parts)
+        def small_number_words(number):
+            return small_words[number] if number < 20 else tens_words[number // 10] + (" " + small_words[number % 10] if number % 10 else "")
 
-    def ordinal_day_words(number):
-        if number < 20:
-            return ordinal_words[number]
-        if number in (20, 30):
-            return "twentieth" if number == 20 else "thirtieth"
-        return tens_words[number // 10] + "-" + ordinal_words[number % 10]
+        def cardinal_year_words(year):
+            parts = []
+            if year // 1000:
+                parts.append(small_words[year // 1000] + " thousand")
+            if year % 1000 // 100:
+                parts.append(small_words[year % 1000 // 100] + " hundred")
+            if year % 100:
+                parts.append(("and " if parts else "") + small_number_words(year % 100))
+            return " ".join(parts)
 
-    grouped_year = cardinal_year_words(day.year)
-    if day.year >= 1000:
-        remainder = day.year % 100
-        grouped_year = small_number_words(day.year // 100) + (" hundred" if not remainder else " oh " + small_words[remainder] if remainder < 10 else " " + small_number_words(remainder))
-    ordinal_day = ordinal_day_words(day.day)
-    hyphen_day = day if day.day > 20 and day.day != 30 else day.replace(day=21 + (day.day - 1) % 8)
-    for label, raw, expected in (
-        ("ordinal", f"{ordinal_day} {month} {grouped_year}", day.isoformat()),
-        ("optional_words", f"the {ordinal_day} of {month} {grouped_year}", day.isoformat()),
-        ("hyphenated", f"the {ordinal_day_words(hyphen_day.day)} of {month} {grouped_year.replace(' ', '-')}", hyphen_day.isoformat()),
-        ("cardinal_year", f"My date of birth is the {ordinal_day} of {month} {cardinal_year_words(day.year)}.", day.isoformat()),
-    ):
-        for role, input_label in (("identity_answer", "answer"), ("speech_text", "speech_text")):
-            run(f"independent_identity_word_date_{input_label}_{label}", lambda raw=raw, expected=expected, role=role: identity_request_boundary(current_identity_state(identity_answer_fixture, roles[role], raw), expected, identity_request_context, "date"))
-    cardinal_day = f"{small_number_words(day.day)} {month} {grouped_year}"
-    for role, label in (("identity_answer", "answer"), ("speech_text", "speech_text")):
-        run(f"independent_identity_cardinal_day_{label}", lambda role=role: identity_request_boundary(current_identity_state(identity_answer_fixture, roles[role], cardinal_day), day.isoformat(), identity_request_context, "date"))
+        def ordinal_day_words(number):
+            if number < 20:
+                return ordinal_words[number]
+            if number in (20, 30):
+                return "twentieth" if number == 20 else "thirtieth"
+            return tens_words[number // 10] + "-" + ordinal_words[number % 10]
 
-    def missing_identity_year(role, raw=None):
-        state = current_identity_state(identity_answer_fixture, roles[role], raw if raw is not None else f"the {ordinal_day} of {month}.")
-        for _, tool in verification_requests:
-            field = tool.get("function", {}).get("parameters", {}).get("properties", {}).get("body", {}).get("properties", {}).get(answer_request_field, {})
-            value = field.get("default")
-            placeholder = PLACEHOLDER.fullmatch(value) if isinstance(value, str) else None
-            if placeholder and placeholder.group(1) not in decision_inputs:
-                state[placeholder.group(1)] = canonical_identity_answer
-        forbidden = (offer, *readbacks, *record_nodes, *security.get("account_nodes", []), *(identifier for identifier, _ in verification_requests))
-        state, target = advance(decision, state, forbidden)
-        assert_denied(state)
-        if nodes[target].get("node_type") != "conversation" or not nodes[target].get("extraction_schema"):
-            raise ValueError("identity date without a year must return to a real listener")
-    for role, label in (("identity_answer", "answer"), ("speech_text", "speech_text")):
-        run(f"independent_missing_identity_year_{label}", lambda role=role: missing_identity_year(role))
-        for form, year in (("grouped", "nineteen and"), ("thousand", "two thousand and")):
-            raw = f"the {ordinal_day_words(min(day.day, 28))} of {month} {year}."
-            run(f"independent_dangling_identity_year_{label}_{form}", lambda role=role, raw=raw: missing_identity_year(role, raw))
+        grouped_year = cardinal_year_words(day.year)
+        if day.year >= 1000:
+            remainder = day.year % 100
+            grouped_year = small_number_words(day.year // 100) + (" hundred" if not remainder else " oh " + small_words[remainder] if remainder < 10 else " " + small_number_words(remainder))
+        ordinal_day = ordinal_day_words(day.day)
+        hyphen_day = day if day.day > 20 and day.day != 30 else day.replace(day=21 + (day.day - 1) % 8)
+        for label, raw, expected in (
+            ("ordinal", f"{ordinal_day} {month} {grouped_year}", day.isoformat()),
+            ("optional_words", f"the {ordinal_day} of {month} {grouped_year}", day.isoformat()),
+            ("hyphenated", f"the {ordinal_day_words(hyphen_day.day)} of {month} {grouped_year.replace(' ', '-')}", hyphen_day.isoformat()),
+            ("cardinal_year", f"My date of birth is the {ordinal_day} of {month} {cardinal_year_words(day.year)}.", day.isoformat()),
+        ):
+            for role, input_label in (("identity_answer", "answer"), ("speech_text", "speech_text")):
+                run(f"independent_identity_word_date_{input_label}_{label}", lambda raw=raw, expected=expected, role=role: identity_request_boundary(current_identity_state(identity_answer_fixture, roles[role], raw), expected, identity_request_context, "date"))
+        cardinal_day = f"{small_number_words(day.day)} {month} {grouped_year}"
+        for role, label in (("identity_answer", "answer"), ("speech_text", "speech_text")):
+            run(f"independent_identity_cardinal_day_{label}", lambda role=role: identity_request_boundary(current_identity_state(identity_answer_fixture, roles[role], cardinal_day), day.isoformat(), identity_request_context, "date"))
 
-    code_prefix = "My last four digits are" if len(canonical_identity_code) == 4 else "My verification code is"
-    for label, speech in (("period", canonical_identity_code + "."), ("prefix", code_prefix + " " + canonical_identity_code + ".")):
-        run(f"independent_identity_code_in_speech_text_{label}", lambda speech=speech: identity_request_boundary(current_identity_state(identity_code_fixture, roles["speech_text"], speech), canonical_identity_code, identity_code_context, "code"))
-    code_words = [small_words[int(digit)] for digit in canonical_identity_code]
-    for label, separator in (("space", " "), ("comma", ", "), ("hyphen", "-")):
-        speech = separator.join(code_words)
-        for role, input_label in (("identity_answer", "answer"), ("speech_text", "speech_text")):
-            run(f"independent_identity_code_words_{input_label}_{label}", lambda speech=speech, role=role: identity_request_boundary(current_identity_state(identity_code_fixture, roles[role], speech), canonical_identity_code, identity_code_context, "code"))
+        def missing_identity_year(role, raw=None):
+            state = current_identity_state(identity_answer_fixture, roles[role], raw if raw is not None else f"the {ordinal_day} of {month}.")
+            for _, tool in verification_requests:
+                field = tool.get("function", {}).get("parameters", {}).get("properties", {}).get("body", {}).get("properties", {}).get(answer_request_field, {})
+                value = field.get("default")
+                placeholder = PLACEHOLDER.fullmatch(value) if isinstance(value, str) else None
+                if placeholder and placeholder.group(1) not in decision_inputs:
+                    state[placeholder.group(1)] = canonical_identity_answer
+            forbidden = (offer, *readbacks, *record_nodes, *security.get("account_nodes", []), *(identifier for identifier, _ in verification_requests))
+            state, target = advance(decision, state, forbidden)
+            assert_denied(state)
+            if nodes[target].get("node_type") != "conversation" or not nodes[target].get("extraction_schema"):
+                raise ValueError("identity date without a year must return to a real listener")
+        for role, label in (("identity_answer", "answer"), ("speech_text", "speech_text")):
+            run(f"independent_missing_identity_year_{label}", lambda role=role: missing_identity_year(role))
+            for form, year in (("grouped", "nineteen and"), ("thousand", "two thousand and")):
+                raw = f"the {ordinal_day_words(min(day.day, 28))} of {month} {year}."
+                run(f"independent_dangling_identity_year_{label}_{form}", lambda role=role, raw=raw: missing_identity_year(role, raw))
+
+    if "numeric_code" in identity_kinds:
+        code_prefix = "My last four digits are" if len(canonical_identity_code) == 4 else "My verification code is"
+        for label, speech in (("period", canonical_identity_code + "."), ("prefix", code_prefix + " " + canonical_identity_code + ".")):
+            run(f"independent_identity_code_in_speech_text_{label}", lambda speech=speech: identity_request_boundary(current_identity_state(identity_code_fixture, roles["speech_text"], speech), canonical_identity_code, identity_code_context, "code"))
+        code_words = [small_words[int(digit)] for digit in canonical_identity_code]
+        for label, separator in (("space", " "), ("comma", ", "), ("hyphen", "-")):
+            speech = separator.join(code_words)
+            for role, input_label in (("identity_answer", "answer"), ("speech_text", "speech_text")):
+                run(f"independent_identity_code_words_{input_label}_{label}", lambda speech=speech, role=role: identity_request_boundary(current_identity_state(identity_code_fixture, roles[role], speech), canonical_identity_code, identity_code_context, "code"))
 
     def missing_identity_speech(input_fixture=identity_answer_fixture, cached_answer=canonical_identity_answer, partial_code_field=None):
         state = identity_state(input_fixture)
@@ -992,10 +1269,12 @@ def _independent_checks(nodes, snippets, security, checks):
         assert_denied(state)
         if nodes[target].get("node_type") != "conversation" or not nodes[target].get("extraction_schema"):
             raise ValueError("missing identity speech must return to a real listener without a bank action")
-    run("independent_missing_identity_speech", missing_identity_speech)
-    run("independent_missing_identity_code_speech", lambda: missing_identity_speech(identity_code_fixture, canonical_identity_code))
-    for role, label in (("identity_answer", "answer"), ("speech_text", "speech_text")):
-        run(f"independent_partial_identity_code_words_{label}", lambda role=role: missing_identity_speech(identity_code_fixture, canonical_identity_code, roles[role]))
+    if "date" in identity_kinds:
+        run("independent_missing_identity_speech", missing_identity_speech)
+    if "numeric_code" in identity_kinds:
+        run("independent_missing_identity_code_speech", lambda: missing_identity_speech(identity_code_fixture, canonical_identity_code))
+        for role, label in (("identity_answer", "answer"), ("speech_text", "speech_text")):
+            run(f"independent_partial_identity_code_words_{label}", lambda role=role: missing_identity_speech(identity_code_fixture, canonical_identity_code, roles[role]))
 
     def inactive_identity_event(input_fixture, speech, event):
         state = current_identity_state(input_fixture, roles["speech_text"], speech)
@@ -1005,7 +1284,22 @@ def _independent_checks(nodes, snippets, security, checks):
         assert_denied(state)
         if nodes[target].get("node_type") != "conversation" or not nodes[target].get("extraction_schema"):
             raise ValueError("inactive identity answer event must return to a real listener")
-    for kind, input_fixture, speech in (("date", identity_answer_fixture, f"{day.day} {month} {day.year:04d}."), ("code", identity_code_fixture, canonical_identity_code + ".")):
+    for index, question in enumerate(questions):
+        kind = question["kind"]
+        input_fixture = identity_answer_fixture if kind == "date" else identity_code_fixture if kind == "numeric_code" else question["fixture"]
+        field = roles["speech_text"] if kind == "numeric_code" else roles["identity_answer"]
+        expected_answer = input_fixture[field]
+        run(f"independent_required_identity_question_{index}", lambda input_fixture=input_fixture, field=field, expected_answer=expected_answer, question=question: identity_request_boundary(current_identity_state(input_fixture, field, expected_answer), expected_answer, question["request_context"], question["kind"]))
+        if kind == "text":
+            run(f"independent_missing_identity_text_speech_{index}", lambda input_fixture=input_fixture, expected_answer=expected_answer: missing_identity_speech(input_fixture, expected_answer))
+            for label, event in (("empty", ""), ("unknown", "__unrecognized_event__"), ("question", events["question"])):
+                run(f"independent_identity_text_{index}_{label}_event_blocks_verification", lambda input_fixture=input_fixture, expected_answer=expected_answer, event=event: inactive_identity_event(input_fixture, expected_answer, event))
+    event_probes = []
+    if "date" in identity_kinds:
+        event_probes.append(("date", identity_answer_fixture, f"{day.day} {month} {day.year:04d}."))
+    if "numeric_code" in identity_kinds:
+        event_probes.append(("code", identity_code_fixture, canonical_identity_code + "."))
+    for kind, input_fixture, speech in event_probes:
         for label, event in (("empty", ""), ("unknown", "__unrecognized_event__"), ("question", events["question"])):
             run(f"independent_identity_{kind}_{label}_event_blocks_verification", lambda input_fixture=input_fixture, speech=speech, event=event: inactive_identity_event(input_fixture, speech, event))
 
@@ -1025,7 +1319,8 @@ def _independent_checks(nodes, snippets, security, checks):
         if nodes[target].get("node_type") == "api_request":
             bound_request(target, state)
     run("independent_latest_third_party_blocks_identity", latest_third_party)
-    run("independent_latest_third_party_blocks_identity_code", lambda: latest_third_party(identity_code_fixture))
+    if "numeric_code" in identity_kinds:
+        run("independent_latest_third_party_blocks_identity_code", lambda: latest_third_party(identity_code_fixture))
     for operation, action_gate in security.get("action_guards", {}).items():
         def empty_action(action_gate=action_gate):
             state = step(action_gate["node"], {})
@@ -1035,14 +1330,14 @@ def _independent_checks(nodes, snippets, security, checks):
     return reports
 
 
-def validate(workflow, policy, openapi, checks):
+def validate(workflow, policy, openapi, checks, brief_lines=None):
     try:
-        return _validate(workflow, policy, openapi, checks)
+        return _validate(workflow, policy, openapi, checks, brief_lines)
     except (AttributeError, KeyError, TypeError, ValueError) as exc:
         return {"ok": False, "valid": False, "errors": [f"malformed generated data: {exc}"], "checks": []}
 
 
-def _validate(workflow, policy, openapi, checks):
+def _validate(workflow, policy, openapi, checks, brief_lines=None):
     """Return a JSON report; never execute a workflow API call."""
     errors, reports, snippets, api_entries = [], [], {}, []
     def fail(message):
@@ -1197,6 +1492,13 @@ def _validate(workflow, policy, openapi, checks):
                     fail(f"{node_id}/{name}: wrong API URL or method")
                 body = properties.get("body", {})
                 fields = body.get("properties", {})
+                if name == "create_promise":
+                    bindings = security.get("promise_request_fields", {})
+                    for role, expected_type in (("amount", "number"), ("date", "string")):
+                        field = bindings.get(role) if isinstance(bindings, dict) else None
+                        expected = _resolve(schema.get("properties", {}).get(field, {}), openapi)
+                        if field not in fields or field not in schema.get("required", []) or expected.get("type") != expected_type or role == "date" and expected.get("format") != "date":
+                            fail(f"{node_id}/{name}: promise_request_fields.{role} must match a required semantic OpenAPI/request property")
                 guarded_write = node_id in security.get("record_nodes", []) or name in action_guards or name in ("schedule_callback", "transfer_to_agent", "add_note")
                 for field in schema.get("required", []):
                     if field not in fields:
@@ -1396,7 +1698,7 @@ def _validate(workflow, policy, openapi, checks):
             report["error"] = str(exc)
             fail(f"check {report['name']}: {exc}")
         reports.append(report)
-    independent = _independent_checks(all_nodes, snippets, security, checks)
+    independent = _independent_checks(all_nodes, snippets, security, checks, policy=policy, openapi=openapi, brief_lines=brief_lines, close_tool=closing_entries[0][2] if closing_entries else None)
     reports.extend(independent)
     for report in independent:
         if not report["ok"]:

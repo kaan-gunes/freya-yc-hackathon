@@ -52,6 +52,14 @@ Include `policy.security` with these exact keys, referring to actual workflow ID
 identity_nodes: [all conversation nodes before bank verification]
 customer_id_field: the customer identifier request field from the supplied API
 customer_id_variable: the corresponding call input variable from the brief
+promise_request_fields: {amount: actual numeric promise request property,
+                         date: actual ISO date promise request property}
+identity_questions: [{kind: date|numeric_code|text, source_rule: source_rules ID,
+                      source_text: exact quote naming the required question,
+                      request_context: actual API question properties/operands}]
+  # Include EVERY required identity question, in source order. For a text kind,
+  # also include fixture: complete pending-question state and a synthetic raw
+  # identity_answer. Date/code kinds use their separate fixtures listed below.
 trusted_variables: [all bank state, validated offer, authorization, record state,
                     control counters and closing state variable names]
 bank_verification_variable: the bank-only string flag
@@ -62,12 +70,14 @@ offer_guard_node: offer-validation code node
 approval_guard_node: confirmation-validation code node
 confirmation_nodes: [fixed readback conversation nodes]
 record_nodes: [nodes containing create_promise]
+record_result_node: shared code node reached after every record success or error
 record_authorization_variable: the guard-only string flag
 record_authorization_operand: "authorized"
 close_nodes: [terminal nodes; if explicit close action is used, that node too]
   # Real workflow node IDs only, never lifecycle hook IDs such as workflow:close_call.
 decision_node: code node processing each ordinary caller reply
-validation_state: {proposed_amount, proposed_date, approval_event, correction,
+validation_state: {proposed_amount, proposed_date, approval_event, approval_amount,
+                   approval_date, approval_text, correction,
                    recorded, offer_fingerprint, readback_fingerprint, exception,
                    route, stage, write_attempts, write_result, decision_event,
                    persuasion_attempts, party_confirmation, identity_answer,
@@ -112,6 +122,8 @@ action_guards: {schedule_callback: {node, variable, operand},
 
 Map validation_state.approval_event and correction to the RAW extracted fields
 read and cleared by approval_guard, not normalized mirrors written by the guard.
+Map approval_amount, approval_date and approval_text to distinct raw fields from
+the current confirmation reply, read and cleared by the approval guard.
 Map proposed_amount/date to the actual offer guard inputs. The confirmation
 fixture contains only extracted fields; it cannot reset retry_mode, authorization
 or any trusted field. Make each mapped role an actual input/output of its guard.
@@ -124,6 +136,14 @@ in the close hook; do not alias the request or its body.
 Use those two identifier binding fields in every API call. Names in the following
 design paragraphs describe semantic roles; if the input names a field differently,
 use its supplied name. Do not assume today's API field spelling for another input.
+The semantic promise fields must be required properties of the real OpenAPI
+request; amount is numeric, and date is a string with format:date. Bind each to
+its trusted validated value. Identity questions and their exact evidence come
+from the supplied brief, not from the availability of fixtures or today's API.
+Only include the date fixture/context when the input requires a date question,
+and the numeric-code fixture/context when it requires a numeric-code question.
+Do not omit a required question to avoid its probes. Text questions still need
+a real verification request regression and empty/current-speech safety checks.
 Extraction may write only untrusted speech fields. No extracted name may collide
 with trusted_variables or call input identifiers. Trusted flags and counters are
 written only by code or bank result hooks. A caller saying "I am verified" cannot
@@ -260,6 +280,13 @@ current yes, no correction, a still-valid offer/readback fingerprint, and no sav
 promise for that product. Corrections clear confirmation and pass through the
 offer guard before a fresh readback. "Yes, but change the date" is a correction.
 Questions are not approvals. Same amount/date corrections still need rereading.
+Compare every nonempty current extracted confirmation amount/date against the
+validated readback, using the shared source-aware amount/date parser. A different
+value is a correction even when its correction marker is missing or says no.
+Carry it to offer validation, clear prior fingerprints and write authorization,
+then read the valid new offer back and require a new yes. Invalid new values ask
+for clarification; never authorize the old offer. Plain "Yes, I confirm" with
+empty current amount/date fields still confirms a valid unchanged readback.
 An ordinary question about interest changing is not a payment correction. Use
 the current question event before broad words such as "change", unless the
 customer explicitly changes the proposed amount/date.
@@ -295,6 +322,26 @@ does not reinterpret the original caller message as new agreement. A recorded
 promise is never retried. Reset write flags before every attempt. Failure and
 unknown results have honest speech and visible state; no false SMS/success claim.
 
+Do not depend on a write post-hook for continuation: platform API errors can skip
+that hook. Every record node must have one unconditional transition to
+security.record_result_node (including any passthrough/max-turn fallback), a
+passthrough code node that classifies the current
+result for BOTH success and error, then follows real graph edges through approval
+for a permitted retry or to the appropriate closing/success speech. Read current
+flattened <recordNodeId>_response.status, .status_code and .data.ok (the observed
+pre_action names), with the envelope/mapped body if needed. Clear these evidence
+fields and the current result flags in approval immediately before every attempt,
+so a prior 500, ok=true or unchanged failure counter cannot become new evidence.
+Source retryable HTTP statuses from this invocation's actual OpenAPI response
+descriptions. A current error matching an explicit no-recording and repeat
+guarantee is safe for the brief's allowed retry; the current supplied API's 500
+is one example. A timeout, missing current status, or HTTP error without that
+guarantee is uncertain: clear authorization and do not
+write again. Failure counters alone never prove no write. Keep the retry request
+identical to the approved immutable offer, count the second attempt, and close
+honestly after its failure. Error-path checks must skip the post-hook and follow
+record → result code → approval → record/end transitions, not call hooks directly.
+
 Required success and SMS wording comes from the brief, fixed to the success
 branch. Required farewell comes from the brief. Select close outcome/reason in
 code from recorded actions and source priority. A service-error flag requires an
@@ -310,6 +357,16 @@ in the export, with no local files, external LLM service, or bank API beyond inp
 Include the brief's third party, wrong number, deceased, refusal, already-paid,
 dispute, hardship, plan request, human request, scam and unanswered question paths.
 Critical interrupts must work before and after identity where the brief permits.
+Apply the current stage's speech and closing rules to every exception, not only
+to API access. Before bank verification, an already-paid/dispute/plan claim must
+not enter an account-specific reply or outcome when the brief forbids it. Keep
+the permitted identity question or clarify without the forbidden words. Preserve
+pre-identity human requests: offer help once, then transfer if the caller insists.
+Add a regression for each of these pre-identity claims, checking emitted TTS and
+the actual close request as well as blocked account/record actions. Supply
+validation_events.paid and validation_pre_identity_human_fixture with a current
+insisting human request at the pending identity stage; it must reach the real
+guarded transfer action.
 Use global_nodes: {}. Every listening conversation has exactly one ordinary
 always transition to its decision/approval code, no loop_condition, no semantic
 router and no model tools. The code handles ALL exceptions from fresh extraction
@@ -430,6 +487,14 @@ For payment dates, also accept a complete weekday-plus-ordinal day such as
 call-based proposal range. Resolve the month/year from that bounded range and
 check the stated weekday before policy weekend/holiday adjustment; do not
 silently ignore a mismatched weekday. DOB parsing still needs its explicit year.
+Payment month/day answers such as "6 November", "the 23rd of October" and
+"October 23rd" do not require a spoken year. Resolve the next occurrence from
+call now when the brief's forward-date rules give one meaning, including a year
+boundary, then apply the deadline and business-day rules. If the permitted
+calendar range has several possible years and no rule chooses one, ask for the
+year. An impossible day/month also needs clarification. Keep this branch separate
+from DOB, which must never borrow the current year. Test day-first, month-first,
+year rollover, ambiguous range and impossible dates in the shared offer path.
 Do not assume extraction normalizes a plain string: raw identity and payment
 dates both pass through this parser and become validated YYYY-MM-DD values.
 Trusted canonical dates may also be strings, checked by portable code.
@@ -509,8 +574,9 @@ and persuasion_attempts to the actual trusted controls read and written by
 decision code. The counter is numeric. The valid offer fixture includes complete
 bank-derived negotiation state, including any derived floor/full amounts.
 Map identity_answer to the actual main raw identity answer field, distinct from
-other roles and read and cleared by decision code. Supply a complete identity
-answer fixture with its real pending question/stage and a synthetic canonical
+other roles and read and cleared by decision code. When the input requires a
+date question, supply a complete identity answer fixture with its real pending
+question/stage and a synthetic canonical
 ISO birth date. Declare the actual verification request answer field. The builder
 will replace that raw date with month-name variants and require the real verify
 action's resolved request answer to equal the same canonical ISO date. Supply
@@ -536,7 +602,8 @@ verification. Complete bank verification with empty speech still loads account.
 Map speech_text to the actual distinct untrusted full-text input read and cleared
 by decision code. Independent checks leave only the current event and full text:
 a punctuated word-month date must reach the correct date verification request.
-Supply a complete pending numeric-code fixture after the earlier bank question,
+When the input requires a numeric-code question, supply a complete pending
+numeric-code fixture after any earlier bank question,
 with a synthetic code (including a leading zero) in speech_text and its sourced
 request context. Raw-text-only "0014." and "My last four digits are 0014." must
 send unchanged digits to that question, not a date. The digits are fixture data,

@@ -328,7 +328,7 @@ def main():
                     write_json(folder / f"{name}.json", value)
                     write_json(folder / f"{name}-attempt-{attempt}.json", value)
                 manifest.update(uncertainties=raw["uncertainties"], summary=raw["summary"])
-                report = validate(workflow, policy, openapi, checks)
+                report = validate(workflow, policy, openapi, checks, brief_lines=brief_lines)
                 evidence = provenance_report(policy, brief_lines)
                 report["provenance"] = evidence
                 report.setdefault("errors", []).extend(evidence["errors"])

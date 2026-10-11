@@ -170,6 +170,9 @@ class TestHelperChecks(unittest.TestCase):
                 result = self.run_official(resumed)
             self.assertTrue(result[0][0]["pass"], "the unchanged official scorer must still accept the happy path")
             self.assertEqual(resumed.report["simulations"][0]["scoring_status"], "complete")
+            self.assertNotIn("seconds", resumed.report["simulations"][0])
+            self.assertGreaterEqual(resumed.report["simulations"][0]["recovery_seconds"], 0)
+            self.assertEqual(result[4], 0)
             self.assertTrue(all(item.args[0] == "GET" for item in api.call_args_list))
             self.assertTrue(all(item.args[1] is None for item in bank.call_args_list))
 
@@ -351,15 +354,49 @@ class TestHelperChecks(unittest.TestCase):
                 report = json.loads((folder / "summary.json").read_text())
                 self.assertEqual(report["status"], "blocked_by_bank")
                 self.assertEqual(report["simulations"][0]["execution_status"], "completed")
+                report["simulations"][0]["seconds"] = 128.45
+                (folder / "summary.json").write_text(json.dumps(report))
                 (kit / ".personas.json").unlink()
                 unavailable = False
                 api.reset_mock()
-                with patch.object(helper.sys, "argv", ["test_agent.py", "--resume", str(folder)]):
+                with patch.object(helper.sys, "argv", ["test_agent.py", "--resume", str(folder)]), \
+                        patch.object(helper.time, "monotonic", side_effect=[100, 103.25]):
                     self.assertEqual(helper.main(), 0)
                 report = json.loads((folder / "summary.json").read_text())
                 self.assertEqual((report["status"], report["passed"], report["total"]), ("completed", 1, 1))
                 self.assertEqual(report["reported_agent_versions"], [7])
+                self.assertEqual(report["simulations"][0]["seconds"], 128.45)
+                self.assertEqual(report["simulations"][0]["recovery_seconds"], 3.25)
+                self.assertEqual(json.loads((folder / "official-results.json").read_text())["seconds"], 128)
                 self.assertTrue(all(item.args[0] == "GET" for item in api.call_args_list))
+
+    def test_cli_resume_lock_rejection_preserves_all_saved_outputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit = Path(directory)
+            cases_path = kit / "input-cases.json"
+            cases_path.write_text(json.dumps([self.case()]))
+            api, bank = Mock(side_effect=self.api), Mock(side_effect=self.bank)
+            with patch.object(helper, "KIT", kit), patch.object(run_cases, "ROOT", kit), \
+                    patch.object(freya, "api", api), patch.object(helper, "bank_http", bank), \
+                    patch.object(freya, "create_personas", return_value={"personas": [{"id": "persona-1"}]}), \
+                    patch.object(helper.time, "sleep"), \
+                    patch.dict(os.environ, {"FREYA_API_KEY": "mock-freya-key", "FREYA_BANK_TEAM_KEY": "mock-private-bank-key", "FREYA_BUILDER_LOCK_OWNER": "invalid"}), \
+                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                with patch.object(helper.sys, "argv", ["test_agent.py", "agent-1", "--cases", str(cases_path)]):
+                    self.assertEqual(helper.main(), 0)
+                folder = next(path for path in (kit / "results").iterdir() if path.is_dir())
+                before = {path.relative_to(folder): path.read_bytes() for path in folder.rglob("*") if path.is_file()}
+                (kit / ".personas.json").unlink()
+                api.reset_mock()
+                bank.reset_mock()
+                with contextlib.closing(helper.acquire_test_lock()), \
+                        patch.object(helper.sys, "argv", ["test_agent.py", "--resume", str(folder)]):
+                    self.assertEqual(helper.main(), 2)
+                after = {path.relative_to(folder): path.read_bytes() for path in folder.rglob("*") if path.is_file()}
+                self.assertEqual(after, before)
+                self.assertFalse((kit / ".personas.json").exists())
+                api.assert_not_called()
+                bank.assert_not_called()
 
     def test_standalone_test_uses_builder_lock(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(helper, "KIT", Path(directory)), \

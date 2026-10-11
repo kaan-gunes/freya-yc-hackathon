@@ -65,6 +65,13 @@ limits, returning from completed identity, silent replies, third-party identity
 interrupts and six month-name date forms at the real verification request.
 Synthetic fixture inputs and
 variable roles come from the candidate; expected safety rules come from code.
+Current amount/date changes must force a new readback even without a correction
+label. Record success and errors both pass through a result code node; skipped
+post-hooks, stale status, safe retries and unknown timeouts are checked through
+the real graph. Promise field names are checked against the actual OpenAPI and
+request. Identity question declarations use the original brief evidence; date
+and numeric-code probes apply only to required question types. Pre-identity
+speech/closing and payment dates without a year also have independent checks.
 
 The graph checks require offer/readback guards on record paths, reachable actions
 and terminals, and reject unconditional action loops. Callback, transfer and
@@ -102,6 +109,9 @@ bash scripts/test-agent.sh --resume build-the-builder/results/RESULT_FOLDER
 Resume uses saved bank sessions and only reads the known simulation. It does not
 repeat writes. An unknown create result without a simulation ID cannot be
 resumed automatically. Incomplete ledger reads have no invented score.
+The lock is acquired before saved results are changed. Resume preserves execution
+seconds and stores its read time separately as recovery_seconds. Old runs without
+saved execution timing keep that value unknown; official numeric totals use zero.
 
 ## Next checks
 
