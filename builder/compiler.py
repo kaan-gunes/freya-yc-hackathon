@@ -239,8 +239,42 @@ elif vars.get({event!r}) == {events['yes']!r}:
                        if nodes[row['target_node']]['node_type'] == 'conversation'
                        and row['target_node'] not in security['confirmation_nodes']}
     question_fields.discard(None)
-    if answers and len(question_fields) == 1:
-        question_field = question_fields.pop()
+    question_field = next(iter(question_fields)) if len(question_fields) == 1 else None
+    if question_field:
+        # Missing extraction is not evidence of refusal; keep the current proposal.
+        conversation = security.get('validation_conversation', {})
+        payment_stage = conversation.get('minimum_fixture', {}).get(roles['stage'], 'payment')
+        listener_routes = {_route_operand(row['condition'], route) for row in nodes[decision]['transitions']
+                           if nodes[row['target_node']]['node_type'] == 'conversation'
+                           and row['target_node'] not in security['confirmation_nodes']
+                           and _tts_variable(nodes[row['target_node']]) == question_field}
+        if len(listener_routes) != 1:
+            raise ValueError('Missing payment text needs one declared listener route')
+        listener_route = next(iter(listener_routes))
+        preserved = {roles[key] for key in ('proposed_amount', 'proposed_date', 'persuasion_attempts',
+                     'offer_fingerprint', 'readback_fingerprint', 'write_result', 'stage')}
+        preserved.update(conversation.get('state', {}).values())
+        code = _snippet(nodes[decision])
+        body = f"""_kaan_missing_payment_text = vars.get({roles['stage']!r}) == {payment_stage!r} and vars.get({security['bank_verification_variable']!r}) == {security['bank_gate']['operand']!r} and vars.get({roles['decision_event']!r}) == {events.get('non_answer', 'non_answer')!r} and not str(vars.get({roles['speech_text']!r}) or '').strip() and not vars.get({roles['decision_amount']!r}) and not vars.get({roles['decision_date']!r})
+_kaan_missing_payment_state = {{name: vars[name] for name in {sorted(preserved)!r} if name in vars}} if _kaan_missing_payment_text else {{}}
+if _kaan_missing_payment_text:
+    vars[{roles['decision_event']!r}] = ''
+    vars[{roles['speech_text']!r}] = ''
+"""
+        original, prefix = _section(code['default'], 'MISSING PAYMENT INPUT', body.rstrip())
+        body = f"""if _kaan_missing_payment_text:
+    for name, value in _kaan_missing_payment_state.items():
+        vars[name] = value
+    vars[{authorization!r}] = ''
+    vars[{roles['decision_event']!r}] = ''
+    vars[{roles['speech_text']!r}] = ''
+    vars[{question_field!r}] = 'Please repeat your answer.'
+    vars[{route!r}] = {listener_route!r}
+"""
+        original, suffix = _section(original, 'MISSING PAYMENT OUTPUT', body.rstrip())
+        code['default'] = prefix + original.rstrip() + '\n' + suffix
+        changes.append('decision: missing current non-answer text asks again without changing the proposal or persuasion count')
+    if answers and question_field:
         readback_fields = {_tts_variable(nodes[name]) for name in security['confirmation_nodes']}
         readback_fields.discard(None)
         terminal_fields = {_tts_variable(nodes[name], True) for name in security['close_nodes'] if nodes[name]['node_type'] == 'end_call'}

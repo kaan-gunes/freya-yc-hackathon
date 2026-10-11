@@ -1467,6 +1467,21 @@ def _independent_checks(nodes, snippets, security, checks, policy=None, openapi=
             run("independent_minimum_answer_" + label, lambda event=event: question(event))
         run("independent_missing_question_text", lambda: question(events["question"], True))
 
+        if security.get("confirmation_return_routes"):
+            def missing_non_answer(text):
+                base = conversation["minimum_fixture"]
+                state, target = advance(decision, current(base, events.get("non_answer", "non_answer"), text),
+                                        (offer, *readbacks, *record_nodes, *security["account_nodes"]))
+                assert_denied(state)
+                reply = spoken(target, state)
+                if nodes[target].get("node_type") != "conversation" or not reply.strip() or re.search(r'\b[0-9]+\b', reply):
+                    raise ValueError("missing non-answer text must ask for clarification without another payment offer")
+                for field in (*fields.values(), *(roles[name] for name in ("proposed_amount", "proposed_date", "persuasion_attempts", "stage"))):
+                    if state.get(field) != base.get(field):
+                        raise ValueError("missing non-answer text changed proposal/once-only/persuasion state")
+            for label, text in (("empty", ""), ("whitespace", " \t ")):
+                run("independent_missing_non_answer_" + label, lambda text=text: missing_non_answer(text))
+
         def support_decline(event, text="I do not want a transfer. Can you reduce the amount?"):
             base = conversation["support_fixture"]
             state, target = advance(decision, current(base, event, text),

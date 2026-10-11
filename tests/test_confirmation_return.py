@@ -175,6 +175,50 @@ class ConfirmationReturnTests(unittest.TestCase):
         repeated, _ = compile_candidate(compiled)
         self.assertEqual(repeated, compiled)
 
+    def test_missing_non_answer_text_preserves_the_offer_and_asks_again(self):
+        original = interrupted_candidate()
+        code = original['workflow']['nodes']['decision']['pre_actions'][0]['function']['parameters']['properties']['code']
+        code['default'] += """
+if event == 'non_answer' and vars.get('stage') == 'payment':
+    vars['persuasion_attempts'] = prior_attempts + 1
+    vars['amount'] = vars.get('bank_floor')
+    vars['date'] = '2026-10-16'
+    vars['question_text'] = 'Can you pay ' + str(vars['amount']) + ' on ' + vars['date'] + '?'
+    vars['route'] = 'listen'
+"""
+        compiled, _ = compile_candidate(original)
+        base = dict(compiled['policy']['security']['validation_conversation']['minimum_fixture'],
+                    speech_event='non_answer', speech_amount='', speech_date='',
+                    full_too_much='yes', amount='25', date='2026-10-14',
+                    offer_fingerprint='current offer', readback_fingerprint='', write_attempts=0)
+        fields = ('amount', 'date', 'bank_floor', 'floor_offered', 'support_offered',
+                  'persuasion_attempts', 'offer_fingerprint', 'readback_fingerprint', 'full_too_much')
+        for text in ('', '  \t\n', None):
+            for attempts in (0, 1):
+                with self.subTest(text=text, attempts=attempts):
+                    before = dict(base, speech_text=text, persuasion_attempts=attempts)
+                    state, target = advance(compiled['workflow'], 'decision', before)
+                    self.assertEqual(target, 'payment_listen')
+                    self.assertEqual(spoken(compiled['workflow'], target, state), 'Please repeat your answer.')
+                    self.assertEqual({key: state[key] for key in fields}, {key: before[key] for key in fields})
+                    self.assertEqual(state['record_authorization'], '')
+                    self.assertEqual(state['write_attempts'], 0)
+                    self.assertEqual(state['speech_event'], '')
+                    state.update(speech_event='yes', speech_text='I can pay 35 on October 16th.',
+                                 speech_amount='35', speech_date='2026-10-16')
+                    state, target = advance(compiled['workflow'], 'decision', state)
+                    self.assertEqual(target, 'confirmation')
+                    self.assertEqual(state['validated_amount'], 35.0)
+                    self.assertEqual(state['validated_date'], '2026-10-16')
+                    self.assertEqual(state['record_authorization'], '')
+        # Genuine current non-answers retain the sourced persuasion branch.
+        for text in ('You tell me.', 'I cannot commit to paying.'):
+            state, target = advance(compiled['workflow'], 'decision', dict(base, speech_text=text))
+            self.assertEqual(target, 'payment_listen')
+            self.assertEqual(state['persuasion_attempts'], 1)
+            self.assertEqual(state['date'], '2026-10-16')
+            self.assertIn('Can you pay', spoken(compiled['workflow'], target, state))
+
     def test_a_wrong_yes_label_needs_current_explicit_consent(self):
         compiled, _ = compile_candidate(interrupted_candidate())
         for text in ("", "No, I do not confirm.", "Could you change the interest rate?"):
