@@ -51,6 +51,41 @@ class TestHelperChecks(unittest.TestCase):
         self.assertEqual(api.call_count, 4)
         self.assertEqual(sleep.call_args_list, [call(2), call(4), call(8)])
 
+    def test_transient_get_transport_failure_recovers_with_bounded_backoff_but_post_never_retries(self):
+        eof = helper.urllib.error.URLError(helper.ssl.SSLEOFError(8, "[SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol"))
+        for error in (eof, helper.urllib.error.URLError("UNEXPECTED_EOF_WHILE_READING"),
+                      helper.urllib.error.URLError(TimeoutError("timed out")), ConnectionResetError("connection reset by peer")):
+            with self.subTest(error_type=type(error).__name__):
+                api = Mock(side_effect=[error, error, {"status": "completed"}])
+                with patch.object(helper.time, "sleep") as sleep:
+                    self.assertEqual(helper.freya_read_retry(api, "GET", "/simulation"), {"status": "completed"})
+                self.assertEqual(api.call_count, 3)
+                self.assertEqual(sleep.call_args_list, [call(2), call(4)])
+                api = Mock(side_effect=error)
+                with patch.object(helper.time, "sleep") as sleep, self.assertRaises(type(error)):
+                    helper.freya_read_retry(api, "POST", "/simulation", {"agentId": "mock"})
+                self.assertEqual(api.call_count, 1)
+                sleep.assert_not_called()
+        api = Mock(side_effect=eof)
+        with patch.object(helper.time, "sleep") as sleep, self.assertRaises(helper.urllib.error.URLError):
+            helper.freya_read_retry(api, "GET", "/simulation")
+        self.assertEqual(api.call_count, 4)
+        self.assertEqual(sleep.call_args_list, [call(2), call(4), call(8)])
+
+    def test_permanent_get_errors_and_malformed_responses_are_not_retried(self):
+        for error in (helper.urllib.error.URLError(helper.ssl.SSLCertVerificationError(1, "certificate verify failed")),
+                      helper.urllib.error.URLError("hostname resolution failed"),
+                      helper.urllib.error.HTTPError("https://example.invalid", 401, "Unauthorized", {}, None),
+                      json.JSONDecodeError("invalid JSON", "not JSON", 0)):
+            with self.subTest(error_type=type(error).__name__):
+                api = Mock(side_effect=error)
+                with patch.object(helper.time, "sleep") as sleep, self.assertRaises(type(error)):
+                    helper.freya_read_retry(api, "GET", "/simulation")
+                self.assertEqual(api.call_count, 1)
+                sleep.assert_not_called()
+                if isinstance(error, helper.urllib.error.HTTPError):
+                    error.close()
+
     def make_evidence(self, folder, api=None, bank=None, report=None, resume=False):
         (folder / "calls").mkdir(exist_ok=True)
         report = report or {"agent_id": "agent-1", "simulations": [], "reported_agent_versions": [], "transcript_errors": []}

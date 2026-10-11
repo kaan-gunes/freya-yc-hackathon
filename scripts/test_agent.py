@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import re
+import ssl
 import sys
 import time
 import urllib.error
@@ -290,11 +291,18 @@ def freya_read_retry(api, method, path, body=None, **params):
     for attempt in range(4):
         try:
             return api(method, path, body, **params)
-        except RuntimeError as error:
-            if method != "GET" or not str(error).startswith(f"GET {path} -> 503:") or attempt == 3:
+        except (RuntimeError, urllib.error.URLError, TimeoutError, ConnectionResetError, ssl.SSLEOFError) as error:
+            unavailable = isinstance(error, RuntimeError) and str(error).startswith(f"GET {path} -> 503:")
+            reason = error.reason if isinstance(error, urllib.error.URLError) else error
+            transient_transport = not isinstance(error, urllib.error.HTTPError) and (
+                isinstance(reason, (TimeoutError, ConnectionResetError, ssl.SSLEOFError))
+                or isinstance(error, urllib.error.URLError) and isinstance(reason, str) and any(
+                    phrase in reason.lower() for phrase in ("unexpected_eof_while_reading", "eof occurred in violation of protocol", "timed out", "connection reset by peer")))
+            if method != "GET" or not (unavailable or transient_transport) or attempt == 3:
                 raise
             delay = 2 ** (attempt + 1)
-            print(f"Freya GET returned 503; retrying in {delay} seconds ({attempt + 1}/3).", flush=True)
+            cause = "returned 503" if unavailable else "transport read failed"
+            print(f"Freya GET {cause}; retrying in {delay} seconds ({attempt + 1}/3).", flush=True)
             time.sleep(delay)
 
 

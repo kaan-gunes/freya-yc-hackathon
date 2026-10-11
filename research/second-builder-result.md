@@ -1,8 +1,8 @@
 # Second builder result - 2026-10-11
 
 Status: version 5 passed PUB-01 once and all three repeats without an update.
-The ten-case Brief A run is pending. Payment-parser follow-ups are source-only
-until the next build; no broader success claim is made.
+The ten-case Brief A run completed at 2/10. Payment-parser and spoken-year
+follow-ups are source-only until the next build; no broader success claim is made.
 Dates in this report use Europe/Istanbul. Artifact names use UTC.
 
 ## Code and checks
@@ -14,8 +14,9 @@ Commit `6482ae1` adds the pending-question request-context regression.
 Commit `65ec36a` covers fresh identity dates in the general date input, with a
 paired check that denies cached answers when all current speech is empty.
 Commit `46b658c` verifies fresh full-text identity answers safely and generated
-the tested version 5. All 71 repository tests pass, and the builder self-check
-passes after the latest payment-parser follow-up.
+the tested version 5. Commit `cc9109d` adds the payment-parser follow-up.
+All 73 repository tests pass, and the builder self-check passes after the bounded
+GET transport-retry follow-up. Spoken-year regressions are still being added.
 Follow-up checks add normal identity completion, supplementary decision tests
 that cannot replace required guard tests, and three attempts within one deadline.
 
@@ -83,6 +84,11 @@ agent. It rejects conflicting iteration ownership before scoring. Diagnostics
 read direct errors, omit stale snapshots, and redact before truncating.
 The recovered v1 call shows two schema-write error events, one failed extraction
 and one unmatched route. Its ledger was not rescored.
+GET reads now retry recognized SSL EOF, timeout and connection-reset failures,
+using the existing four attempts and 2/4/8-second backoff. POST, certificate,
+DNS, authentication and malformed-JSON errors are not retried. Mock tests cover
+recovery, exhaustion and permanent failures; the official client and scorer are
+unchanged.
 
 ## Build
 
@@ -213,9 +219,36 @@ No unsafe write or persuasion use occurred. Removing only the numeric suffix in
 each actual pre-guard state reaches confirmation. The source follow-up addresses
 the full-amount and unit-suffix faults; it has not yet generated a new live version.
 
-The ten-case Brief A batch on unchanged version 5 is pending in
+The ten-case Brief A batch on unchanged version 5 completed at 2/10 in
 `build-the-builder/results/20261010T235951416344Z-404df3cd`, simulation
-`6e2fb6f2-91fe-4f1b-8e8e-aebcd238a71c`. No score is assigned while pending.
+`6e2fb6f2-91fe-4f1b-8e8e-aebcd238a71c`, iteration
+`068733b5-861b-4260-9567-a644d9673bad`. PUB-03 (identity rejection budget)
+and PUB-09 (restructuring transfer) passed. All execution, result reads and
+official scoring completed, with owned version 5 evidence. An SSL EOF interrupted
+the initial GET poll. Read-only resume recovered the same existing simulation;
+no new sessions, personas or simulation POSTs were sent.
+
+Five failures (PUB-04/05/06/08/10) gave the DOB entirely in words: ordinal day,
+optional "the/of" and a named month, followed by a grouped spoken year. Some
+used hyphens. The parser accepted only numeric day/year and also demanded four
+raw year digits. Replay of the actual current state reproduces `incomplete_identity`;
+the same state with only its fresh answer made canonical reaches verification.
+The source follow-up requires a bounded complete spoken-date grammar and paired
+missing-year denial checks, not a guessed year or a charge to the bank rejection
+budget. No private identity values are copied into this report.
+
+| Case | Call | Result / cause |
+| --- | --- | --- |
+| PUB-01 | `d4128471-f8d8-49c8-8e56-10c18c9cfb7c` | Failed; payment parsing loop, no promise |
+| PUB-02 | `18a85d5a-0633-47d3-8294-9ab271b32d09` | Failed; valid callback reply not scheduled |
+| PUB-03 | `415e1514-3e2d-4e63-8515-becc3fc4ebd7` | Passed |
+| PUB-04 | `278cbf5d-afdf-4cd8-8289-5d0474df4e60` | Failed; spoken DOB loop |
+| PUB-05 | `862b7cba-6550-492c-8c64-8ed8ddeb7a70` | Failed; spoken DOB loop |
+| PUB-06 | `1efb32df-1e8f-4630-8889-22b66100acca` | Failed; spoken DOB loop |
+| PUB-07 | `f3523a2b-864a-4d4e-b92c-c5bdb9e52616` | Failed; payment/date loop, no promise |
+| PUB-08 | `91badbeb-d2e3-44b1-aedc-57ed0c8c3e0e` | Failed; spoken DOB loop |
+| PUB-09 | `21e7a07f-b5e6-4310-9f5c-865ec59b31b5` | Passed |
+| PUB-10 | `371a03c1-2915-4cc7-acd7-0a36978ed9fe` | Failed; spoken DOB loop |
 
 ## Historical v2 Evidence
 
