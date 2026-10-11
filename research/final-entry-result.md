@@ -41,4 +41,6 @@ Kapanış **23:00 İstanbul / 20:00 UTC**. Alıcı **yavuz@freyavoice.ai**. Üç
 
 Final koşusu temiz code commit'iyle çalışmalı. Agentı builder üretir; workflow elle düzenlenmez. Genel bug düzeltmesi yapılırsa yeni builder koşusu ve trace gerekir. Kaynak review'u, publish/readback/export ve teslim alanları henüz bekleniyor. Yeni telefon simülasyonu başlatılmadı.
 
+İlk gerçek final koşusu `20261011T175029017220Z`, temiz `51edba4` kaynağıyla **4.51 saniyede** model turn başlamadan durdu: Codex giriş sınırı 1.048.576 karakter, gönderilen 1.175.636 karakter. Workflow/publish oluşmadı. Genel düzeltme JSON'un yalnız satır dışı girintisini kaldırır; bütün değerler, string boşlukları, orijinal satır numaraları ve kaynak hashleri korunur. Bu vaka girdisinde 324.164 karakter kazandırır. 14 runner/contract testi geçti; yeni temiz koşu gereklidir.
+
 Okuyucu limitleri: OCR yok; `.doc/.xls` dönüşümü gerekiyor; Excel formülleri cached değer ister; tamamen yazıyla söylenen DOB yılı yok. Final kaynağı IVR aktarım flag/kodunu ve yıllık değişim-hakkı alanını vermiyor; kaynakta bulunmayan endpoint/alan icat edilemez. Konuşma intent'i gerçek telephony transfer kanıtı değildir.

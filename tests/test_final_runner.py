@@ -22,6 +22,19 @@ def api_tool(url, name="source_action"):
 
 
 class FinalRunnerChecks(unittest.TestCase):
+    def test_json_prompt_whitespace_preserves_all_values_and_source_line_evidence(self):
+        content = json.dumps({"records": [{"label": "  keep these spaces  ", "balance": 123.45}]}, indent=8)
+        numbered = runner.numbered_source(Path("records.json"), content)
+        lines = numbered.splitlines()
+        restored = "\n".join(line.split(": ", 1)[1] for line in lines)
+        self.assertEqual(json.loads(restored), json.loads(content))
+        self.assertLess(len(restored), len(content))
+        self.assertEqual(len(lines), len(content.splitlines()))
+        for number, line in enumerate(lines, 1):
+            self.assertTrue(line.startswith(str(number) + ": "))
+            self.assertIn(line.split(": ", 1)[1], content.splitlines()[number - 1])
+        self.assertIn('  indented code', runner.numbered_source(Path("guide.md"), '  indented code'))
+
     def test_folder_discovers_unique_schema_and_keeps_explicit_file_precedence(self):
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory).resolve()

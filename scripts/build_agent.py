@@ -71,6 +71,13 @@ def source(path):
     return read_source(path, ROOT)
 
 
+def numbered_source(path, content):
+    lines = content.splitlines()
+    if path.suffix.lower() == ".json":
+        lines = [line.strip() for line in lines]
+    return "\n".join(f"{number}: {line}" for number, line in enumerate(lines, 1))
+
+
 def load_openapi(path, content=None):
     content = source(path)[1] if content is None else content
     if path.suffix.lower() in (".yaml", ".yml"):
@@ -489,7 +496,7 @@ def main():
                 (inputs / copy_name).write_text(redact(content))
             if api_paths and index == len(args.briefs):
                 openapi = load_openapi(path, content)
-            numbered = "\n".join(f"{number}: {line}" for number, line in enumerate(content.splitlines(), 1))
+            numbered = numbered_source(path, content)
             sections.append(f"\n=== SOURCE {metadata['path']} ({metadata['lines']} lines) ===\n{numbered}\n=== END SOURCE ===\n")
         manifest["sources"] = sources
         precedence = (
@@ -542,6 +549,7 @@ def main():
                     "When a source defines successful HTTP responses as requiring a body field equality, every applicable operation MUST contain x-business-success={path:<original bank JSON body path>,operand:<exact JSON value>}. "
                     "Cite that equality in the operation evidence's business_success field with an exact single source line. Do not omit a shared response success condition. "
                     "The path is relative to the original HTTP JSON body, without any platform response wrapper. APIs with no explicit body success condition must omit the extension. "
+                    "Preserve any explicit fixed success-field values as enums in the successful response schema; HTTP success alone does not erase operation-specific body conditions. "
                     "Use the complete original URL pathname in paths, including the source base-address prefix; never drop that prefix. "
                     "Deployment examples describe platform patterns and are not the bank's service contract. "
                     "Use explicit environment exceptions when scoping required service operations; do not invent authentication credentials. "
