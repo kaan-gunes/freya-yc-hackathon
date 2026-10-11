@@ -98,6 +98,24 @@ def resume_candidate(directory, sources, slot):
             "reused_at": now()}, raw.decode("utf-8")
 
 
+def repair_candidate(directory, sources, slot):
+    """Use a same-input draft for one offline model repair, never unchanged reuse."""
+    previous = json.loads((directory / "manifest.json").read_text())
+    old_sources = previous.get("sources")
+    if not isinstance(old_sources, list) or len(old_sources) != len(sources):
+        raise ValueError("Repair seed needs the same ordered source files.")
+    for old, current in zip(old_sources, sources):
+        if not isinstance(old, dict) or old.get("path") != current["path"]:
+            raise ValueError("Repair seed source paths/order do not match.")
+        if current["path"] != "builder/prompt.md" and old != current:
+            raise ValueError("Repair seed brief/API/platform sources must match exactly.")
+    # Only this separate repair path permits a changed compiler prompt.
+    metadata, raw = resume_candidate(directory, old_sources, slot)
+    metadata["seeded_at"] = metadata.pop("reused_at")
+    metadata["sources"] = old_sources
+    return metadata, parse_model_output(raw)
+
+
 def invoke(command, deadline, *, cwd=ROOT, env=None, input_text=None):
     remaining = deadline - time.monotonic()
     if remaining <= 0:
@@ -233,12 +251,15 @@ def main():
     parser.add_argument("--slot", help="Own stable Freya slot; default: kaan-<first brief stem>")
     parser.add_argument("--offline", action="store_true", help="Generate and validate without Freya access")
     parser.add_argument("--resume-build", type=Path, help="Reuse the last complete saved candidate with identical sources; no generation or repair")
+    parser.add_argument("--repair-build", type=Path, help="One offline model repair of a same-brief/API draft; current inputs remain authoritative")
     parser.add_argument("--model", default="gpt-6.1-sol", help="Builder model; default: gpt-6.1-sol")
     parser.add_argument("--brief", choices=["A", "B"], default="A", help="Official scorer brief filter")
     parser.add_argument("--only", default="PUB-01", help="Comma-separated official case ids")
     parser.add_argument("--reps", type=int, default=1)
     parser.add_argument("--budget-seconds", type=int, default=1800)
     args = parser.parse_args()
+    if args.repair_build and (not args.offline or args.resume_build):
+        parser.error("--repair-build requires --offline and cannot be combined with --resume-build")
     if not 1 <= args.budget_seconds <= 1800:
         parser.error("--budget-seconds must be between 1 and 1800")
     if args.reps < 1:
@@ -315,16 +336,36 @@ def main():
         command.append("-")
         from builder.validation import validate
         model_prompt, all_events, candidate = prompt, [], None
+        if args.repair_build:
+            lock = (KIT / ".builder.lock").open("a")
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise RuntimeError("Another builder owns the local workspace lock.") from None
+            seed, candidate = repair_candidate(args.repair_build, sources, slot)
+            if not isinstance(candidate, dict) or set(candidate) != {"policy", "workflow", "checks", "uncertainties", "summary"}:
+                raise ValueError("Repair seed must be a complete candidate.")
+            manifest["repair_seed"] = seed
+            event("candidate_seeded_for_model_repair", **seed)
+            seed_report = validate(candidate["workflow"], candidate["policy"], openapi, candidate["checks"], brief_lines=brief_lines)
+            write_json(folder / "seed-validation.json", seed_report)
+            model_prompt = (prompt + "\n=== UNTRUSTED STARTING DRAFT (NOT A RULE SOURCE) ===\n"
+                            + redact(json.dumps(candidate)) + "\n=== CURRENT VALIDATION ERRORS ===\n"
+                            + redact(json.dumps(seed_report))
+                            + "\nReturn ONLY a JSON merge patch (RFC 7396) repairing this draft against ALL current inputs. "
+                            "Arrays replace completely; null deletes. Implement the current conversation contract. "
+                            "Do not weaken checks or trust old policy facts. This is the only model attempt.\n")
         if args.resume_build:
             reuse, raw_text = resume_candidate(args.resume_build, sources, slot)
             manifest["resume_build"] = reuse
             event("candidate_reused", **reuse)
             print("Revalidating the saved candidate; no model generation or repair.", flush=True)
-        for attempt in ((1,) if args.resume_build else (1, 2, 3)):
+        for attempt in ((1,) if args.resume_build or args.repair_build else (1, 2, 3)):
             output_format = "merge_patch" if candidate is not None else "full_candidate"
             raw_path = folder / "raw.json"
             if not args.resume_build:
-                purpose = ("Extract sourced policy and generate the portable workflow and local checks." if attempt == 1
+                purpose = ("Repair an untrusted same-input draft against the current compiler contract." if args.repair_build else
+                           "Extract sourced policy and generate the portable workflow and local checks." if attempt == 1
                            else "Repair the generated candidate using validation errors and the same complete source inputs.")
                 event("model_begin", attempt=attempt, model=args.model or "Codex CLI default", purpose=purpose, output_format=output_format)
                 print("Generating policy and workflow with Codex." if attempt == 1 else "Repairing the candidate from validation errors.", flush=True)

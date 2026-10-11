@@ -857,6 +857,14 @@ def _independent_checks(nodes, snippets, security, checks, policy=None, openapi=
         run(f"independent_{label}_mismatched_weekday_denied", lambda current=current: mismatched_weekday(current))
 
     payment_month = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December")[proposal_day.month - 1]
+    day_words = "zero first second third fourth fifth sixth seventh eighth ninth tenth eleventh twelfth thirteenth fourteenth fifteenth sixteenth seventeenth eighteenth nineteenth twentieth".split()
+    payment_ordinal_day = day_words[proposal_day.day] if proposal_day.day <= 20 else (
+        "thirtieth" if proposal_day.day == 30 else
+        ("twenty-" if proposal_day.day < 30 else "thirty-") + day_words[proposal_day.day % 10])
+    cardinal_words = "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen".split()
+    cardinal_day = cardinal_words[proposal_day.day] if proposal_day.day < 20 else (
+        ("twenty" if proposal_day.day < 30 else "thirty") +
+        (" " + cardinal_words[proposal_day.day % 10] if proposal_day.day % 10 else ""))
 
     def month_day_record(raw, current):
         state = full_amount_state(events["yes"], str(full_amount)) if current else copy.deepcopy(fixture)
@@ -868,7 +876,10 @@ def _independent_checks(nodes, snippets, security, checks, policy=None, openapi=
     for current, label in ((True, "current"), (False, "shared")):
         for form, raw in (("day_first", f"{proposal_day.day} {payment_month}"),
                           ("month_first", f"{payment_month} {proposal_day.day}{proposal_suffix}"),
-                          ("of_month", f"the {proposal_day.day}{proposal_suffix} of {payment_month}")):
+                          ("of_month", f"the {proposal_day.day}{proposal_suffix} of {payment_month}"),
+                          ("word_ordinal", f"the {payment_ordinal_day} of {payment_month}"),
+                          ("word_cardinal", f"{payment_month} {cardinal_day}"),
+                          ("word_weekday", f"{weekdays[proposal_day.weekday()]} the {payment_ordinal_day}")):
             run(f"independent_{label}_payment_month_day_{form}", lambda raw=raw, current=current: month_day_record(raw, current))
 
     def inactive_full_amount(event):
@@ -1393,6 +1404,149 @@ def _independent_checks(nodes, snippets, security, checks, policy=None, openapi=
             if state.get(action_gate["variable"]) == action_gate["operand"]:
                 raise ValueError("action guard authorized without caller intent or validated inputs")
         run(f"independent_{operation}_missing_inputs", empty_action)
+
+    def spoken(target, state):
+        node = nodes[target]
+        text = node.get("on_enter", {}).get("text", "")
+        if node.get("node_type") == "end_call":
+            text = node.get("terminal", {}).get("function", {}).get("parameters", {}).get("properties", {}).get("spoken_message", {}).get("default", "")
+        def replace(match):
+            value = state.get(match.group(1))
+            if value in (None, ""):
+                raise ValueError("spoken placeholder is empty or unset: " + match.group(1))
+            return str(value)
+        return re.sub(r'\{\{([\w.]+)(?::json)?\}\}', replace, text)
+
+    # These fixtures are required only by sources with the observed negotiation rules.
+    conversation_required = all(any(word in text.lower() for text in source_texts)
+                                for word in ("minimum_payment", "restructuring", "support"))
+    conversation = security.get("validation_conversation")
+    if conversation_required or conversation is not None:
+        fields = conversation.get("state", {}) if isinstance(conversation, dict) else {}
+        if (not isinstance(fields, dict) or set(fields) != {"floor_offered", "support_offered", "minimum_amount"}
+                or any(not isinstance(value, str) or value not in trusted for value in fields.values())
+                or not all(isinstance(conversation.get(name), dict) and conversation[name]
+                           for name in ("minimum_fixture", "support_fixture"))):
+            reports.append({"name": "independent_conversation_contract", "ok": False,
+                            "error": "source-required conversation checks need trusted state roles and minimum/support input fixtures"})
+            return reports
+
+        def current(base, event, text="", raw_date="", amount=""):
+            state = copy.deepcopy(base)
+            for field in decision_inputs:
+                state[field] = ""
+            state[roles["decision_event"]] = event
+            state[roles["speech_text"]] = text
+            state[roles["decision_date"]] = raw_date
+            state[roles["decision_amount"]] = amount
+            state[authorization] = ""
+            return state
+
+        def question(event, missing=False):
+            base = conversation["minimum_fixture"]
+            state, target = advance(decision, current(base, event, "" if missing else "What is the minimum payment?"),
+                                    (offer, *readbacks, *record_nodes, *security["account_nodes"]))
+            assert_denied(state)
+            text = spoken(target, state)
+            value = float(base[fields["minimum_amount"]])
+            numbers = [float(number.replace(",", "")) for number in re.findall(r'\b[0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?\b', text)]
+            if not missing and (value not in numbers or "?" in text):
+                raise ValueError("minimum question must answer the bank amount without another offer")
+            if missing and (numbers or re.search(r'\b(minimum|digital assistant|scam)\b', text, re.I)):
+                raise ValueError("missing question text invented or reused question content")
+            for field in (*fields.values(), roles["persuasion_attempts"]):
+                if state.get(field) != base.get(field):
+                    raise ValueError("question changed bank/once-only/persuasion state")
+            # The same state with no current question cannot replay the consumed text.
+            later, later_target = advance(decision, current(state, events["question"]),
+                                           (offer, *readbacks, *record_nodes, *security["account_nodes"]))
+            if re.search(r'\bminimum\b', spoken(later_target, later), re.I):
+                raise ValueError("consumed minimum question was reused")
+
+        for label, event in (("question", events["question"]), ("empty", ""), ("wrong", events["no"])):
+            run("independent_minimum_answer_" + label, lambda event=event: question(event))
+        run("independent_missing_question_text", lambda: question(events["question"], True))
+
+        def support_decline(event, text="I do not want a transfer. Can you reduce the amount?"):
+            base = conversation["support_fixture"]
+            state, target = advance(decision, current(base, event, text),
+                (offer, *readbacks, *record_nodes, *security["account_nodes"]))
+            assert_denied(state)
+            text = spoken(target, state)
+            if nodes[target].get("node_type") != "end_call" or identity_close_body(state) != {"outcome": "no_promise", "reason": "hardship"}:
+                raise ValueError("current support decline was shadowed by a question/event")
+            if "?" in text or state.get(fields["support_offered"]) != base.get(fields["support_offered"]):
+                raise ValueError("declined support was offered again")
+        for label, event in (("question", events["question"]), ("empty", ""), ("wrong", events["yes"])):
+            run("independent_support_decline_" + label, lambda event=event: support_decline(event))
+        run("independent_support_decline_polite_question", lambda: support_decline(events["question"], "No, thanks. Is there a discount?"))
+
+        def plan(event, text, wanted, pre_identity=False):
+            base = third_party_fixture if pre_identity else fixture
+            state = current(base, event, text)
+            if pre_identity:
+                state[security["bank_verification_variable"]] = "unverified"
+            state, target = advance(decision, state, (offer, *readbacks, *record_nodes, *security["account_nodes"]) if pre_identity else (*record_nodes,))
+            assert_denied(state)
+            requests = bound_request(target, state) if nodes[target].get("node_type") == "api_request" else []
+            restructuring = any(name == "transfer_to_agent" and body.get("queue") == "restructuring" for name, body in requests)
+            if restructuring != wanted or pre_identity and requests:
+                raise ValueError("current plan intent violated the stage/transfer priority")
+            if not wanted and nodes[target].get("node_type") == "conversation":
+                spoken(target, state)
+        for label, event in (("question", events["question"]), ("empty", ""), ("wrong", events["no"])):
+            text = "I cannot pay that amount. I need lower instalments and a new payment plan."
+            run("independent_mixed_plan_" + label, lambda event=event, text=text: plan(event, text, True))
+            run("independent_pre_identity_mixed_plan_" + label, lambda event=event, text=text: plan(event, text, False, True))
+        for label, text in (("negated", "I do not want a new payment plan."),
+                            ("contraction", "I don't want a plan."), ("paying", "I plan to pay on Friday.")):
+            run("independent_plan_" + label, lambda text=text: plan(events["plan"], text, False))
+
+        def mixed_ai(event):
+            raw = f"the {payment_ordinal_day} of {payment_month}"
+            state = current(fixture, event, f"I can pay {full_amount} dollars on {raw}. Are you a robot?", raw, str(full_amount))
+            state, target = advance(decision, state)
+            assert_denied(state)
+            if target not in readbacks or not state.get(roles["offer_fingerprint"]) or state.get(roles["readback_fingerprint"]) != state[roles["offer_fingerprint"]]:
+                raise ValueError("mixed AI offer did not reach a current matching readback")
+            if "digital assistant" not in spoken(target, state).lower():
+                raise ValueError("AI answer disappeared while keeping the current offer")
+            record_amount(state, full_amount, proposal_day.isoformat())
+        for label, event in (("offer", events["yes"]), ("question", events["question"]), ("empty", "")):
+            run("independent_ai_with_current_offer_" + label, lambda event=event: mixed_ai(event))
+
+        def skipped_code():
+            fallback = security.get("code_failure_node")
+            if fallback not in nodes:
+                raise ValueError("code_failure_node must name a literal retry listener")
+            listener = nodes[fallback]
+            transitions = listener.get("transitions", [])
+            if (listener.get("node_type") != "conversation" or not listener.get("extraction_schema")
+                    or listener.get("tools") or "{{" in spoken(fallback, {}) or not spoken(fallback, {}).strip()
+                    or len(transitions) != 1 or transitions[0].get("target_node") != decision
+                    or transitions[0].get("condition") != {"operator": "always"}):
+                raise ValueError("code timeout fallback must collect fresh speech without variables/tools")
+            for name, node in nodes.items():
+                if node.get("node_type") != "code":
+                    continue
+                transitions = node.get("transitions", [])
+                if (node.get("passthrough_default_transition") != fallback or not transitions
+                        or transitions[-1].get("target_node") != fallback
+                        or transitions[-1].get("condition") != {"operator": "always"}):
+                    raise ValueError("skipped code must reach the literal retry listener: " + name)
+                if node.get("max_turn_transition", fallback) != fallback:
+                    raise ValueError("code max-turn path bypassed safe retry")
+            # No snippet is run: the first decision has neither route nor question state.
+            target = next_node(decision, {})
+            if target != fallback:
+                raise ValueError("first code timeout reached an action or uninitialized listener")
+        run("independent_first_code_timeout", skipped_code)
+
+        def normal_close():
+            state, target = confirm(valid_readback())
+            state, target = complete_record(target, state, {"status": "success", "status_code": 200, "data": {"ok": True}})
+            spoken(target, state)
+        run("independent_success_close_resolves", normal_close)
     return reports
 
 

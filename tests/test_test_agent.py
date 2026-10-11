@@ -247,6 +247,16 @@ class TestHelperChecks(unittest.TestCase):
         self.assertEqual([item["kind"] for item in helper.call_diagnostics({"messages": messages})],
                          ["state_write_rejected", "extraction_failure", "router_unmatched", "router_fallback"])
 
+    def test_code_timeout_diagnostic_is_not_an_empty_error_report(self):
+        event = {"event": "function_call_error", "function": "code_exec", "error": "Snekbox did not respond in time",
+                 "variable_table": {"speech_text": "private caller speech"}}
+        diagnostics = helper.call_diagnostics({"messages": [{"role": "system", "nodeId": "decision", "message": json.dumps(event)}]})
+        self.assertEqual([row["kind"] for row in diagnostics], ["code_execution_failure"])
+        self.assertIn("Snekbox", diagnostics[0]["event"])
+        self.assertNotIn("private caller speech", json.dumps(diagnostics))
+        event["function"] = "create_promise"
+        self.assertEqual(helper.call_diagnostics({"messages": [{"role": "system", "message": event}]}), [])
+
     def test_diagnostic_redaction_happens_before_excerpt_truncation(self):
         secret = "synthetic-private-secret-with-a-long-tail"
         event = {"event": "extraction_failed", "reason": secret}

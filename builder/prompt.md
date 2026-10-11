@@ -247,6 +247,12 @@ An empty/no event with residual amount/date fields is not such an acceptance or
 offer. Return to a listener or source-based close, without entering the offer
 guard/readback. Require the current positive offer event, not just populated
 fields or a substring in raw text.
+An AI question combined with an explicit payment offer is still a current offer:
+answer the sourced AI question on the actual listening/readback TTS path and keep
+its current amount/date for the offer guard. A mistaken question/empty event may
+not erase an explicit complete offer in CURRENT full speech. Use bounded current
+offer wording plus its fresh extracted amount/date; bare residual fields remain
+insufficient. Do not borrow any prior speech or approval.
 Never turn a vague date into a silent concrete agreement. Counter updates must
 be per user decision, not per tool result or repeated node entry.
 Treat phrases such as "the week after next" as vague, not as a parsing failure
@@ -383,6 +389,27 @@ clear, or handle fresh exceptions in local deterministic routes before the gate.
 Do not depend on semantic global interrupts to beat a matching deterministic gate.
 Use source priority for hardship vs persuasion/plan request; voluntary offers
 remain possible where allowed. Counter thresholds and API enums are from inputs.
+Use stage-specific extraction descriptions for payment, support and confirmation,
+even if listeners share fields. Always extract the latest full speech verbatim.
+The single event enum is a hint, not a lossless summary of mixed intents. In code,
+before a generic question/offer/persuasion branch, inspect ONLY the copied current
+full speech for explicit support decline and explicit new-plan/lower-instalment
+requests. During pending support, "I do not want a transfer; can you reduce the
+amount?" declines support and answers the question before the sourced hardship
+close; never offer support again. A new-plan request plus amount refusal reaches
+the sourced restructuring action only in permitted verified stages. Negation
+("I do not want a new plan") and planning to pay ("I plan to pay on Friday") are
+not requests for restructuring, even if the event incorrectly says plan. Before
+identity, the same text stays within the source privacy/stage rules. Hardship plus
+a voluntary offer still has the source's priority over restructuring/persuasion.
+Question answering is separate from offering: never append the previous minimum
+or support offer automatically to an answer. If the latest question asks the
+minimum, answer from the bank-derived current floor without a new offer. If the
+full speech is absent, ask what the question is; do not guess minimum/AI/scam
+content from stale text and do not advance counters. Empty/mislabelled events with
+current explicit questions still answer safely. Offer the floor once, preserving
+only the brief's explicit second-persuasion exception; a question cannot spend or
+reset that exception. A support decline must remain declined on later questions.
 Required sympathy must be spoken on the actual listening/readback path, including
 a voluntary offer that goes straight through silent code to confirmation TTS.
 Keep hardship context until that negotiation is resolved. A voluntary offer does
@@ -423,6 +450,17 @@ recorded/SMS/farewell text once, after a successful bank result, if appropriate.
 Define deterministic fallback closing state before each terminal path, and make
 the end_of_call tool defaults all resolve even before code has run. End_call itself is a platform handler,
 not a bank tool. Do not use a phrase-triggered hangup that can skip required text.
+For a normal farewell use a fixed literal terminal sentence without terminal_text.
+Special source closings may use a separate terminal or a guaranteed NONEMPTY
+spoken value; an empty optional prefix is not a resolvable Freya placeholder.
+Preserve sympathy and the successful-record/SMS path. Every code node's final
+always/default/max-turn path must reach a literal safe retry listener without
+runtime placeholders or bank tools. In particular if the FIRST code_exec never
+starts, its except cannot initialize question_text. Use this listener to collect
+fresh speech and return to the guarded decision, never directly to an account or
+write. Its TTS must be meaningful before any code has run. Successful guarded
+transitions still select the actual stage question. Declare this listener as
+security.code_failure_node for an independent skipped-code graph check.
 
 ## Freya format constraints
 
@@ -491,6 +529,13 @@ For payment dates, also accept a complete weekday-plus-ordinal day such as
 call-based proposal range. Resolve the month/year from that bounded range and
 check the stated weekday before policy weekend/holiday adjustment; do not
 silently ignore a mismatched weekday. DOB parsing still needs its explicit year.
+Payment parsing must reuse that SAME bounded cardinal/ordinal DAY grammar for
+named-month and weekday forms: "the sixth of November", "November six",
+"Monday the twenty-sixth". Normalize the whole raw date's day token to its
+integer before the existing named-month/weekday resolution; do not require a
+digit in the payment branch. Match the whole grammar, check weekday agreement,
+and then run the SAME sourced deadline/weekend/holiday adjustment. No public-case
+calendar values belong in parser code. The DOB branch still requires its year.
 Payment month/day answers such as "6 November", "the 23rd of October" and
 "October 23rd" do not require a spoken year. Resolve the next occurrence from
 call now when the brief's forward-date rules give one meaning, including a year
@@ -518,6 +563,22 @@ An empty/unknown opening extraction is an unclear party answer and uses the
 source's opening ask budget. Two unclear answers must not repeat forever when
 the source permits only two asks. Identity parse failures use a different budget
 and cannot count as bank-rejected answers.
+
+## Independent conversation inputs
+
+When the inputs require minimum/floor offers, support and restructuring, provide
+security.validation_conversation with these INPUT declarations (not expected
+answers): state: {floor_offered, support_offered, minimum_amount} mapping to real
+trusted vars; minimum_fixture: a complete synthetic verified payment state AFTER
+the floor was offered once; support_fixture: a complete synthetic verified state
+waiting for the already offered hardship support choice. Include all bank product,
+calendar and counter state needed by the decision. minimum_amount maps to the
+actual current bank floor, not a speech field. floor_offered/support_offered are
+the actual once-only flags/counters consumed by decision. Include them in
+trusted_variables. Independent tests replace every fresh speech field and inspect
+real emitted TTS, guarded transfer requests and close outcome/reason. Missing
+contract data blocks these source-required checks. All workflows declare
+security.code_failure_node; code fallbacks are checked without executing snippets.
 
 ## Executable local checks
 

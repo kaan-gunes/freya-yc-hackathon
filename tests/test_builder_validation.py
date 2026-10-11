@@ -182,6 +182,29 @@ def payment_day(raw):
         end = datetime.date.fromisoformat(vars['deadline'])
         months = 'january february march april may june july august september october november december'.split()
         month_pattern = '(' + '|'.join(months) + ')'
+        ordinals = 'zero first second third fourth fifth sixth seventh eighth ninth tenth eleventh twelfth thirteenth fourteenth fifteenth sixteenth seventeenth eighteenth nineteenth twentieth'.split()
+        day_names = {word: index for index, word in enumerate(ordinals)}
+        for number in range(21, 32):
+            word = 'thirtieth' if number == 30 else ('twenty ' if number < 30 else 'thirty ') + ordinals[number % 10]
+            day_names[word] = number
+        small = 'zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen'.split()
+        for number in range(1, 32):
+            word = small[number] if number < 20 else ('twenty' if number < 30 else 'thirty') + (' ' + small[number % 10] if number % 10 else '')
+            day_names[word] = number
+        raw = raw.lower().strip().replace('-', ' ')
+        day_pattern = '(' + '|'.join(sorted(day_names, key=len, reverse=True)) + ')'
+        named = re.fullmatch(r'(?:the )?' + day_pattern + r'(?: of)? ' + month_pattern, raw)
+        if named:
+            raw = str(day_names[named.group(1)]) + ' ' + named.group(2)
+        else:
+            named = re.fullmatch(month_pattern + ' ' + day_pattern, raw)
+            if named:
+                raw = named.group(1) + ' ' + str(day_names[named.group(2)])
+        weekday_words = re.fullmatch(r'(monday|tuesday|wednesday|thursday|friday|saturday|sunday) the ' + day_pattern, raw)
+        if weekday_words:
+            number = day_names[weekday_words.group(2)]
+            suffix = 'th' if 11 <= number <= 13 else {1: 'st', 2: 'nd', 3: 'rd'}.get(number % 10, 'th')
+            raw = weekday_words.group(1) + ' the ' + str(number) + suffix
         clean = re.sub(r'(\d)(st|nd|rd|th)\b', r'\1', raw.lower().strip())
         clean = re.sub(r'^the ', '', clean)
         match = re.fullmatch(r'([0-9]{1,2})(?: of)? ' + month_pattern, clean)

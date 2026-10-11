@@ -65,6 +65,17 @@ then the same dry-run, publish, readback, export and test gates apply.
 Resume makes no model call or repair. Its new manifest and trace record the original
 run, generation commit, candidate hash and reuse time; `generation_attempts` is empty.
 
+For one offline model repair of an old complete draft, use `--offline
+--repair-build build-the-builder/out/RUN_FOLDER`. The slot and all ordered
+brief/API/platform paths, hashes and line counts must still match. Only the
+compiler prompt may change on this separate path. The draft is not a rule source;
+the model receives all current inputs and current validation errors, returns a
+merge patch, and the assembled candidate passes current validation and provenance.
+There is one model attempt within the same 30-minute limit and local lock. No
+Freya request or test runs. The trace records `candidate_seeded_for_model_repair`,
+the old source/hash evidence and a real generation attempt, rather than reuse.
+`--resume-build` still requires every source hash to match exactly.
+
 The local validator checks stage boundaries, API fields, Python syntax, and
 executes generated guard examples with restricted Python. It also runs its own
 expected checks on shared state across offer, readback, approval and record.
@@ -81,6 +92,13 @@ the real graph. Promise field names are checked against the actual OpenAPI and
 request. Identity question declarations use the original brief evidence; date
 and numeric-code probes apply only to required question types. Pre-identity
 speech/closing and payment dates without a year also have independent checks.
+Word-day payment probes reach both the fresh decision and shared offer guard.
+For sources requiring minimum/support/restructuring, separate conversation input
+fixtures test mixed intents with missing or wrong event labels, current bank
+minimum answers, stale-question clearing, normal closings and skipped-code retry
+speech. These inspect the actual TTS and guarded request fields. A code timeout
+cannot be caught by a snippet that never started; its fallback listener needs
+literal speech and no bank tools.
 
 The graph checks require offer/readback guards on record paths, reachable actions
 and terminals, and reject unconditional action loops. Callback, transfer and
@@ -108,6 +126,7 @@ Each successful metadata source adds version evidence. Call versions use
 dashboard versions are not test evidence. Call diagnostics expose rejected
 state writes, extraction errors, unmatched routes and direct decision fallbacks,
 without copying raw speech into diagnostic excerpts.
+`function_call_error` for `code_exec` is reported as `code_execution_failure`.
 
 If a read fails after a simulation was created, resume the saved run:
 

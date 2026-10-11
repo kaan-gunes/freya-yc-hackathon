@@ -17,6 +17,75 @@ import freya
 
 
 class BuildAgentChecks(unittest.TestCase):
+    def test_offline_seed_repair_is_one_model_call_and_never_unchanged_reuse(self):
+        for invalid in (False, True):
+            with self.subTest(invalid=invalid), tempfile.TemporaryDirectory() as directory:
+                kit = Path(directory)
+                (kit / "docs").mkdir()
+                brief, api = kit / "brief.md", kit / "api.json"
+                brief.write_text("1. A synthetic source rule\n")
+                api.write_text("{}")
+                for name in ("workflow-format.md", "tools-and-code.md", "api.md"):
+                    (kit / "docs" / name).write_text("Synthetic format\n")
+                paths = [brief, api, ROOT / "builder/prompt.md", *[kit / "docs" / name for name in ("workflow-format.md", "tools-and-code.md", "api.md")]]
+                sources = [runner.source(path)[0] for path in paths]
+                previous = kit / "seed"
+                previous.mkdir()
+                old_sources = copy.deepcopy(sources)
+                old_sources[2]["sha256"] = "old-prompt-hash"
+                (previous / "manifest.json").write_text(json.dumps({"sources": old_sources, "slot": "kaan-brief", "code_commit": "old-code", "generation_attempts": [{"attempt": 1}]}))
+                draft = {"policy": {"source_rules": [{"source": sources[0]["path"], "line": 1}]}, "workflow": {"nodes": {"guard": "old"}}, "checks": [], "uncertainties": [], "summary": "Old draft"}
+                path = previous / "candidate-attempt-1.json"
+                path.write_text(json.dumps(draft))
+                original = path.read_bytes()
+                calls, deadlines = [], []
+                def invoke(command, deadline, **kwargs):
+                    deadlines.append(deadline)
+                    if command[:2] == ["git", "rev-parse"]:
+                        return 0, "new-code\n", ""
+                    if command[:2] == ["git", "status"]:
+                        return 0, "", ""
+                    self.assertEqual(command[0], "codex")
+                    calls.append(kwargs["input_text"])
+                    Path(command[command.index("-o") + 1]).write_text(json.dumps({"workflow": {"nodes": {"guard": "repaired"}}}))
+                    return 0, '{"type":"turn.completed"}\n', ""
+                bad = {"ok": False, "errors": ["conversation error"], "checks": []}
+                with patch.object(runner, "KIT", kit), patch.object(runner, "invoke", invoke), \
+                     patch("builder.validation.validate", side_effect=[bad, bad if invalid else {"ok": True, "errors": [], "checks": []}]), \
+                     patch("freya.validate_workflow") as dry_run, patch("freya.save_workflow") as save, patch("freya.api") as remote, \
+                     patch("sys.argv", ["build_agent.py", str(brief), "--openapi", str(api), "--offline", "--repair-build", str(previous), "--budget-seconds", "60"]):
+                    self.assertEqual(runner.main(), 2 if invalid else 0)
+                dry_run.assert_not_called(); save.assert_not_called(); remote.assert_not_called()
+                self.assertEqual(len(calls), 1)
+                self.assertEqual(len(set(deadlines)), 1)
+                self.assertIn("NOT A RULE SOURCE", calls[0])
+                self.assertEqual(path.read_bytes(), original)
+                output = next((kit / "out").iterdir())
+                manifest = json.loads((output / "manifest.json").read_text())
+                self.assertEqual(len(manifest["generation_attempts"]), 1)
+                self.assertEqual(manifest["generation_attempts"][0]["output_format"], "merge_patch")
+                self.assertEqual(manifest["live_test"]["status"], "not_run")
+                self.assertNotIn("resume_build", manifest)
+                self.assertEqual(manifest["repair_seed"]["candidate_sha256"], hashlib.sha256(original).hexdigest())
+                self.assertEqual(json.loads((output / "candidate-attempt-1.json").read_text())["workflow"]["nodes"]["guard"], "repaired")
+                trace = (output / "trace.jsonl").read_text()
+                self.assertIn("candidate_seeded_for_model_repair", trace)
+                self.assertNotIn("candidate_reused", trace)
+                for index in (0, 1, 3, 4, 5):
+                    changed = copy.deepcopy(sources)
+                    changed[index]["sha256"] = "changed-input"
+                    with self.assertRaisesRegex(ValueError, "sources must match exactly"):
+                        runner.repair_candidate(previous, changed, "kaan-brief")
+                with self.assertRaisesRegex(ValueError, "Resume sources do not match"):
+                    runner.resume_candidate(previous, sources, "kaan-brief")
+
+    def test_seed_repair_rejects_online_or_resume_combination_before_any_work(self):
+        for flags in (["--repair-build", "seed"], ["--offline", "--repair-build", "seed", "--resume-build", "seed"]):
+            with self.subTest(flags=flags), patch("sys.argv", ["build_agent.py", "brief", "--openapi", "api", *flags]), \
+                 patch.object(runner, "invoke") as invoke, self.assertRaises(SystemExit):
+                runner.main()
+            invoke.assert_not_called()
+
     def test_resume_revalidates_and_uses_existing_publish_readback_export_test_path(self):
         self.run_mock_build(resume=True, dry_run_rejections=0)
 

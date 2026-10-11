@@ -68,6 +68,8 @@ def call_diagnostics(call):
         validation_errors = result.get("validation_errors", [])
         reason = str(event.get("reason", event.get("error", ""))).lower()
         kinds = []
+        if name == "function_call_error" and event.get("function", event.get("name")) == "code_exec":
+            kinds.append("code_execution_failure")
         if name in ("function_call_complete", "function_call_complete_deferred") and validation_errors:
             kinds.append("state_write_rejected")
         if "extract" in name and (event.get("success") is False or event.get("accepted") is False
