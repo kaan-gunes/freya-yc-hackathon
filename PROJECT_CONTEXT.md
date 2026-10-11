@@ -1,13 +1,13 @@
 # Proje bağlamı ve chat devir notu
 
-Güncelleme: 11 Ekim 2026. Bu not yazılırken yerel HEAD `2031482`; son incelenen uygulama commit'i `9046149`. Daha yeni geliştirme çıktısı henüz incelenmedi. Bu dosya konuşma devamlılığı içindir; kodun veya canlı Freya agentının güncel durumunun kanıtı değildir.
+Güncelleme: 11 Ekim 2026. Son review HEAD `6d324cd`; son incelenen uygulama commit'i `0331b18`, geliştirme raporu `867a097`. Yayımlanmış agent v6, `9fb2dce` girdili builder çalışmasından; `0331b18` henüz yeni agent olarak üretilmedi. Bu dosya konuşma devamlılığı içindir; sonraki kodun veya canlı Freya agentının otomatik güncel durum kanıtı değildir.
 
 ## Yeni chat önce ne okusun?
 
 1. Bu dosya: hedef, ana fikir ve son doğrulanmış durum.
 2. [İlk geliştirme promptu](DEVELOPMENT_PROMPT.md): konuştuğumuz tasarımın ayrıntılı açıklaması.
-3. [Son inceleme](research/builder-review-9046149.md): gözlenen hatalar, replay'ler ve kanıt sınırları.
-4. [İkinci geliştirme promptu](NEXT_DEVELOPMENT_PROMPT.md): incelemeden çıkan sonraki iş.
+3. [Güncel inceleme](research/builder-review-6d324cd.md) ve [ikinci geliştirme sonucu](research/second-builder-result.md): ölçülen v6 sonuçları, yeni replay'ler ve kanıt sınırları. [İlk review](research/builder-review-9046149.md) tarihsel karşılaştırma içindir.
+4. [İkinci geliştirme promptu](NEXT_DEVELOPMENT_PROMPT.md) ve [sonraki kapsam](AFTER_CURRENT_TASK_PROMPT.md): önceki görevler. Güncel review'un düzeltme önceliklerini bunlarla birlikte oku; tamamlandıkları varsayılmamalı.
 5. [Resmî kit README](build-the-builder/README.md), ilgili brief/OpenAPI ve ihtiyaç oldukça platform belgeleri. İş kurallarında verilen brief/API; platform davranışında belgeler ve doğrudan gözlem esas alınır. Araştırma notları bunların yerine geçmez.
 
 Review yaparken Git durumunu, commit farkını ve test edilen agent sürümünü yeniden kontrol et. Eski rapordaki bulguyu yeni sürümde otomatik olarak var veya düzelmiş sayma.
@@ -43,19 +43,21 @@ Organizatörler export'u kendi workspace'lerinde çalıştırır. Görüşme sı
 
 Mevcut giriş `scripts/build-agent.sh` → `scripts/build_agent.py`. Brief/OpenAPI, builder promptu ve platform belgeleri ayrı bir Codex CLI çağrısına gidiyor. Bu çağrının varsayılan modeli `gpt-6.1-sol`; reasoning seviyesi komutta açıkça ayarlanmıyor. Kodlama chat'inin “max” seçimi içteki çağrının da max olduğunu kanıtlamaz.
 
-Model politika, workflow, kontroller, belirsizlikler ve özet üretir. Yerel validator ve Freya dry-run kontrolünden sonra publish/readback/export yapılır; test yardımcısı çalışır. Publish öncesi doğrulama hatası için bir otomatik düzeltme hakkı vardır. Canlı konuşma testinin başarısızlığından sonra otomatik geliştirme döngüsü henüz yoktur.
+Model politika, workflow, kontroller, belirsizlikler ve özet üretir. Yerel validator ve Freya dry-run kontrolünden sonra publish/readback/export yapılır; test yardımcısı çalışır. Aynı 30 dakika içinde en fazla üç generation denemesi vardır; onarımlar sparse merge patch olabilir ve tam aday yeniden doğrulanır. Canlı konuşma testinin başarısızlığından sonra builder içinde otomatik geliştirme döngüsü henüz yoktur.
 
 ## Son doğrulanmış sonuç ve açık iş
 
 - Hazır baseline agent PUB-01'de ödeme sözünü kaydetti, zorunlu SMS cümlesini söylemedi; resmî sonuç **0/1**. Bu kendi builder'ımızın skoru değil. [Rapor](research/ilk-test-sonucu.md).
-- İlk builder'ın 20 repository testi review sırasında geçti. Üretim, publish/readback/export ve bazı guard kontrolleri çalışıyor; bu testler canlı başarının kanıtı değil.
-- Builder'ın yayımladığı v1'in gerçek konuşması kurtarıldı: müşteri ismini teyit etmesine rağmen agent brief dışı **SSN** sorusu sordu ve görüşme kapandı. Simülasyon tamamlanmış, run değerlendirmesi `inconclusive`, görüşme analizi başarısız. Tam ledger skoru alınmadığı için bu koşuya **0/1 veya 1/1 demiyoruz**.
-- Başlıca review işleri: güvenli extraction/router fallback'i; platformda reddedilen tarih temizliği ve eski verinin tekrar kullanılması; doğrulanmış kimlikten sonraki bozuk geçiş; onay düzeltmesinin transfer niyetini yutması; bağımsız ardışık state/graph kontrolleri; servis hatasında simülasyon kimliklerinin korunması; kısmi okumada sürüm kanıtının kaybolmaması.
-- Ek validator açıkları canlı istismar olarak gözlenmedi; offline karşı örneklerle gösterildi. Ayrıntılar ve bu ayrım son review raporunda.
+- Güncel 87 repository testi review sırasında geçti; builder self-check de geçti. Bu testler canlı başarının kanıtı değil.
+- İlk v1'in SSN kaçışı tarihsel hatadır; v6 gate/pieces kayıtlarında bu kaçış, schema-write reddi veya unmatched route görülmedi. String resetleri, deterministik karar yolu, gerçek API kapıları ve evidence/resume için somut iyileştirmeler var.
+- V6 raporu: PUB-01 ilk koşu 1/1 ve değişmeyen sürümde üç tekrar 3/3; tam A 3/10, seçilmiş corrects 1/5, tek pieces 1/1. Bu review GET ile v6 ve beş call'ı doğruladı; ledger tekrar puanlamadı. Pieces başarısı fragment assembly kanıtı değil.
+- `0331b18` kelimeyle telefon rakamı/cardinal DOB günlerini yerel kontrol ediyor; henüz bununla yeni agent üretilmedi. Canlı v6 bu cevaplarda kimlikte takılıyor.
+- Öncelikli güncel açıklar: correction etiketi kaçınca yeni tutar/tarihi yok sayıp eski sözü yetkilendirme; API hata verip post-hook atlandığında retry olmaması; validator'ın amount/date alan adları ile DOB/numeric-code sorularını zorunlu varsayması; pre-auth paid dalının ödeme cümlesi; yılsız ödeme tarihi reddi. Correction, pre-auth konuşma ve yılsız tarih offline runtime replay; retry gerçek call'da; alan adları sentetik eşdeğer API fixture'ında doğrulandı.
+- Helper resume kilidi almadan geçerli özeti değiştiriyor; ayrıca eski simulation seconds değerini read süresiyle eziyor. Mock ile doğrulandı. A+B, kelimeyle para ve cross-turn kimlik parçalarını birleştirme hâlâ açık kapsam.
 
-İlgili v1 kayıtları: agent `404df3cd-803d-4656-89ac-ac122f9d31d2`, workflow `e14dbbfa-9fd9-4bb0-9a4e-882897366f8d`, simülasyon `c69cae64-1161-4984-9097-a07e907e44eb`. Bunlar son review'un kimlikleri; dashboard'da bugün en yeni sürüm oldukları varsayılmamalı.
+Güncel review agentı `404df3cd-803d-4656-89ac-ac122f9d31d2`, workflow `e14dbbfa-9fd9-4bb0-9a4e-882897366f8d`, v6 ID `946ce959-11d7-4ab5-bfda-faeea22588ad`. A batch simülasyonu `667f1b35-8be6-422f-a1e9-db22f8324bf8`. Sonraki review'da bu sürümün hâlâ en yeni olduğu yeniden kontrol edilmeli. Tam build artefaktları arkadaşın bilgisayarında; root checkout'ta yalnız GET ile kurtarılan review kanıtları bulunuyor.
 
-Sıra: somut hataları düzelt → doğru sürümde PUB-01 tek koşu → aynı sürümde üç tekrar → A'nın tamamı ve konuşma çeşitleri → A+B çoklu ürün → farklı girdilere genelleme. Ayrı LLM şefi/agresif bağlam kırpma, çalışan çekirdekten sonra ölçülecek. Final puanında ayrıca mimari özgünlük puanı yok; sonuç ve yeniden üretilebilirlik önemli.
+Sıra: güncel review'daki somut hatalar ve regresyonlar → son kaynakla yeni üretim → yeni sürümde PUB-01 ve tam A → başarılı adayın aynı sürümde tekrarları → API/kimlik genelleme kontrolü → A+B ve stiller. Eski v6 PUB-01 tekrarlarını gereksiz yeniden koşma. Ayrı LLM şefi/agresif bağlam kırpma, çalışan çekirdekten sonra ölçülecek. Final puanında ayrıca mimari özgünlük puanı yok; sonuç ve yeniden üretilebilirlik önemli.
 
 ## Review ve test devamlılığı
 
