@@ -2109,7 +2109,7 @@ def _validate_service(workflow, policy, openapi, checks, brief_lines):
         blocked = {gate['variable'] for gate in gates.values()}
         for result in results.values():
             blocked.update(result.get(key) for key in ('success_variable', 'route_variable', 'speech_variable'))
-        allowed = (context | trusted | (extracted if node is not None else set())) - blocked
+        allowed = (extracted if node is not None else context | trusted) - blocked
         additions, conflicts = {}, set()
         prefixes = [result.get('response_prefix', key + '_response') for key, result in results.items()]
         for check in checks:
@@ -2118,9 +2118,10 @@ def _validate_service(workflow, policy, openapi, checks, brief_lines):
             if assertion is not None and not _json_equal(check['expected'].get(assertion[0]), assertion[1]):
                 continue
             values = check['vars']
-            shared = (set(fixture) & set(values) & allowed)
-            if not shared or any(not _json_equal(fixture[key], values[key]) for key in shared):
-                continue
+            if node is None:
+                shared = set(fixture) & set(values) & allowed
+                if not shared or any(not _json_equal(fixture[key], values[key]) for key in shared):
+                    continue
             for key in (set(values) & allowed) - set(fixture):
                 if any(key == prefix or key.startswith(prefix + '.') for prefix in prefixes):
                     continue

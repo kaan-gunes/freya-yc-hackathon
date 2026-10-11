@@ -284,7 +284,7 @@ def repair_candidate(directory, sources, slot, *, mock_url=None):
     raw_path = directory / f"raw-attempt-{attempt}.json"
     if raw_path.exists():
         draft = parse_model_output(raw_path.read_text())
-        trace_rows = [json.loads(row) for row in (directory / "trace.jsonl").read_text().splitlines()]
+        trace_rows = [json.loads(row) for row in (directory / "trace.jsonl").read_text().splitlines() if row.strip()]
         messages = [row["item"] for row in trace_rows if row.get("event") == "agent_session" and row.get("attempt") == attempt]
         matched = False
         for item in messages:

@@ -35,7 +35,7 @@ class BuildAgentChecks(unittest.TestCase):
             thread = "00000000-0000-0000-0000-000000000001"
             rows = [{"event": "agent_session", "attempt": 1, "item": {"type": "thread.started", "thread_id": thread}},
                     {"event": "agent_session", "attempt": 1, "item": {"type": "item.completed", "item": {"type": "agent_message", "text": json.dumps(draft)}}}]
-            (path / "trace.jsonl").write_text("\n".join(map(json.dumps, rows)))
+            (path / "trace.jsonl").write_text("\n\n".join(map(json.dumps, rows)) + "\n\n")
             with patch.object(runner, "resume_candidate", side_effect=lambda *a, **k: ({"reused_at": "now"}, '{"compiled": true}')):
                 metadata, result = runner.repair_candidate(path, [], "slot")
                 self.assertEqual(result, draft)
