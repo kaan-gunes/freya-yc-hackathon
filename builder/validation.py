@@ -1521,6 +1521,96 @@ def _independent_checks(nodes, snippets, security, checks, policy=None, openapi=
         for label, event in (("offer", events["yes"]), ("question", events["question"]), ("empty", "")):
             run("independent_ai_with_current_offer_" + label, lambda event=event: mixed_ai(event))
 
+        if security.get("confirmation_return_routes"):
+            # Source-compiled drafts must also pass raw replies beyond model event labels.
+            def raw_approval(state, event, text):
+                state = copy.deepcopy(state)
+                for field in approval_inputs:
+                    state[field] = ""
+                state[roles["approval_event"]] = event
+                state[roles["approval_text"]] = text
+                return state
+
+            def raw_confirmation_denied(text, event=events["yes"], no_transfer=False):
+                state, target = advance(approval, raw_approval(valid_readback(), event, text), (*record_nodes,))
+                assert_denied(state)
+                if no_transfer and nodes[target].get("node_type") == "api_request":
+                    if any(name == "transfer_to_agent" for name, _ in bound_request(target, state)):
+                        raise ValueError("current plan rejection authorized a transfer")
+                spoken(target, state)
+
+            for label, text in (("empty", ""), ("negative", "No, I do not confirm."),
+                                ("question", "Could you tell me the minimum?"),
+                                ("unable", "Yes, but I cannot pay."), ("past", "I said yes earlier."),
+                                ("not_confirmed", "I have not confirmed."), ("uncertain", "Yes, maybe."),
+                                ("unrelated_agreement", "I agree that this is your job.")):
+                run("independent_raw_confirmation_" + label, lambda text=text: raw_confirmation_denied(text))
+            for label, event in (("question", events["question"]), ("plan", events["plan"])):
+                run("independent_raw_confirmation_plan_declined_" + label,
+                    lambda event=event: raw_confirmation_denied("I do not want lower instalments.", event, True))
+
+            def interrupted_confirmation(change=None):
+                state, target = advance(approval, raw_approval(valid_readback(), events["question"], "Am I talking to a robot?"), (*record_nodes,))
+                assert_denied(state)
+                if "digital assistant" not in spoken(target, state).lower():
+                    raise ValueError("confirmation question lost the sourced AI answer")
+                amount = str(conversation["minimum_fixture"][fields["minimum_amount"]]) if change == "amount" else ""
+                day = (proposal_day + datetime.timedelta(days=1)).isoformat() if change == "date" else ""
+                text = f"Yes, change it to {amount or full_amount} on {day or proposal_day.isoformat()}." if change else "Yes, I confirm."
+                state, target = advance(decision, current(state, events["yes"], text, day, amount), (*record_nodes,))
+                assert_denied(state)
+                if target not in readbacks or not state.get(roles["offer_fingerprint"]) or state.get(roles["readback_fingerprint"]) != state[roles["offer_fingerprint"]]:
+                    raise ValueError("reply after a confirmation question did not reach a fresh matching readback")
+                spoken(target, state)
+                if change == "amount" and float(state.get(roles["proposed_amount"], 0)) != float(amount):
+                    raise ValueError("corrected amount was lost before the fresh readback")
+                expected_amount, expected_date = state[roles["proposed_amount"]], state[roles["proposed_date"]]
+                state, target = confirm(state)
+                if target not in record_nodes or state.get(authorization) != authorized:
+                    raise ValueError("second explicit confirmation did not authorize the reread offer")
+                if not any(name == "create_promise" and _json_equal(body.get(promise_fields["amount"]), expected_amount)
+                           and body.get(promise_fields["date"]) == expected_date for name, body in bound_request(target, state)):
+                    raise ValueError("second confirmation did not bind the current reread amount and date")
+
+            for label in (None, "amount", "date"):
+                run("independent_confirmation_question_return_" + (label or "yes"),
+                    lambda label=label: interrupted_confirmation(label))
+
+            def raw_ai_offer(kind):
+                raw = f"the {payment_ordinal_day} of {payment_month}"
+                day = "the week after next" if kind == "vague" else raw
+                amount = str(float(conversation["minimum_fixture"][fields["minimum_amount"]]) / 2) if kind == "invalid" else ""
+                text = f"I can pay {amount + ' dollars ' if amount else ''}on {day}. Am I talking to a robot?"
+                state, target = advance(decision, current(fixture, "offer", text, day, amount), (*record_nodes,))
+                assert_denied(state)
+                if "digital assistant" not in spoken(target, state).lower():
+                    raise ValueError("current AI answer disappeared on the final offer or clarification path")
+
+            for kind in ("current", "vague", "invalid"):
+                run("independent_raw_ai_offer_" + kind, lambda kind=kind: raw_ai_offer(kind))
+
+            def longer_current_confirmation():
+                state = valid_readback()
+                amount, day = state[roles["proposed_amount"]], state[roles["proposed_date"]]
+                state, target = advance(approval, raw_approval(state, events["yes"], "Yes, please record that payment promise. Thank you."))
+                if target not in record_nodes or state.get(authorization) != authorized:
+                    raise ValueError("clear current consent did not authorize the readback promise")
+                if not any(name == "create_promise" and _json_equal(body.get(promise_fields["amount"]), amount)
+                           and body.get(promise_fields["date"]) == day for name, body in bound_request(target, state)):
+                    raise ValueError("clear current consent changed the readback promise")
+            run("independent_raw_confirmation_longer_current_yes", longer_current_confirmation)
+
+            def non_agent_robot_question():
+                base = conversation["minimum_fixture"]
+                state, target = advance(decision, current(base, events["question"], "What is the minimum payment for my robot vacuum purchase?"),
+                                        (offer, *readbacks, *record_nodes, *security["account_nodes"]))
+                assert_denied(state)
+                text = spoken(target, state)
+                numbers = [float(number.replace(",", "")) for number in re.findall(r'\b[0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?\b', text)]
+                if float(base[fields["minimum_amount"]]) not in numbers or "digital assistant" in text.lower():
+                    raise ValueError("non-agent robot question replaced the sourced minimum answer with an AI disclosure")
+            run("independent_raw_non_agent_robot_minimum", non_agent_robot_question)
+
         def skipped_code():
             fallback = security.get("code_failure_node")
             if fallback not in nodes:

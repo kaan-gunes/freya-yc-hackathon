@@ -19,6 +19,13 @@ customer or policy data. Call variable `now` is the date anchor when specified.
 Later memos override only the rules they explicitly replace. Make unresolved
 conflicts visible. A missing critical rule blocks production; do not guess.
 The requested output is an initial prototype, not production certification.
+The builder runs a source-owned compiler after assembling your proposal. It owns
+the confirmation return boundary: ordinary replies never jump directly to
+approval or record. After a confirmation question and ordinary listening reply,
+revalidate the current proposal and speak a fresh readback; only the answer to
+that readback may authorize a record. Preserve the separate guarded write retry.
+Do not generate KAAN source markers or confirmation_return_routes metadata;
+the compiler supplies them. Keep business policy and API bindings from the inputs.
 `unsupported` means an explicit input requirement is unimplemented. An unspecified
 failure-recovery policy belongs in uncertainties with its safe stop behavior;
 do not label a nonexistent requirement as omitted. A conflict on an exceptional
@@ -33,6 +40,8 @@ backslashes. In a snippet's JSON string a regex backslash must be doubled.
 - policy: a JSON OBJECT. Include all extracted rules,
   source locations, calendar and band data, floors, speech, closing table,
   exceptions and their priority, API field bindings, limits, and unsupported.
+  In policy.speech include ai_answer, scam_answer and unknown_answer when these
+  answers are required by the source. These are sourced speech, not tool consent.
 - workflow: a complete Freya workflow OBJECT.
 - checks: a JSON ARRAY of runnable guard test cases.
 - uncertainties: plain short statements about unresolved input or platform limits.
@@ -409,6 +418,9 @@ another, and do not rewrite the event so a later branch loses a fact. Keep:
   An answer is not an offer, refusal, approval or counter step. A question with
   a wrong no/yes/empty event answers without spending persuasion, offering the
   floor or support again, or replaying an older question.
+  AI questions include "Am I talking to a robot?", "Am I speaking with an AI?"
+  and "Are you a robot?". Preserve the answer even when an invalid/vague offer
+  returns to clarification instead of reaching readback.
 - support_declined_now, only while the sourced support offer is pending: a
   leading refusal ("No", "No, thanks", "No thank you"; not "No problem") or a
   negated transfer/connection/support phrase in active or passive form ("I do

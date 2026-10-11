@@ -208,7 +208,7 @@ class BuildAgentChecks(unittest.TestCase):
                 if resume_failure == "missing-source" and path == openapi:
                     raise FileNotFoundError("Missing source")
                 metadata, content = original_source(path)
-                if resume_failure == f"source-{source_paths.index(path)}":
+                if path in source_paths and resume_failure == f"source-{source_paths.index(path)}":
                     content = '{"changed": true}' if path == openapi else content + "\nChanged source\n"
                     metadata.update(sha256=hashlib.sha256(content.encode()).hexdigest(), lines=len(content.splitlines()))
                 return metadata, content

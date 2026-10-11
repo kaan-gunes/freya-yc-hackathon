@@ -34,6 +34,13 @@ Repairs return only a JSON merge patch; the builder assembles and validates the
 complete candidate before any publish. Arrays replace the entire prior array.
 All call code and policy are inside the workflow; no local server is needed.
 
+Before validation, `builder/compiler.py` adds source-owned confirmation gates
+to each generated candidate. A reply after a confirmation question returns through
+offer validation and a fresh readback. Current raw questions, refusals and
+conditional consent cannot authorize a promise. Sourced AI/scam answers survive
+offer clarification. Business values still come from the input policy; this is
+the first source-owned part of the controller, not a complete policy compiler.
+
 After the first real test passes, run three repeats against that same published
 agent. This is a separate development test, so it does not extend a build's limit:
 
@@ -55,6 +62,8 @@ The code revision includes whether the worktree has changes. Full model reasonin
 is not stored. Generated artifacts are local and ignored by Git.
 `raw-attempt-N.json` preserves the model response, including sparse repairs;
 `candidate-attempt-N.json` preserves the assembled full candidate.
+The compiled candidate is separate from the raw model response. The manifest
+records the compiler source hash and the trace records `workflow_compiled`.
 
 To reuse the last saved complete candidate from a prior generation run, add
 `--resume-build build-the-builder/out/RUN_FOLDER` to the same build command.
@@ -64,6 +73,22 @@ stop before platform access. The current validator and source provenance run aga
 then the same dry-run, publish, readback, export and test gates apply.
 Resume makes no model call or repair. Its new manifest and trace record the original
 run, generation commit, candidate hash and reuse time; `generation_attempts` is empty.
+For compiled runs, the compiler source must also match. Legacy runs without
+compiler metadata still use their original exact-source resume checks.
+
+To compile an existing same-input draft without a model or Freya request:
+
+```bash
+python3 scripts/build_agent.py build-the-builder/briefs/brief-a.md \
+  --openapi build-the-builder/tools/openapi.json --slot kaan-brief-a \
+  --offline --compile-build build-the-builder/out/RUN_FOLDER
+```
+
+This path makes one deterministic compilation and runs the full validator and
+provenance checks. The saved draft must have the same ordered brief/API/platform
+sources and slot. The prompt and compiler may change only on this explicit path
+or on model repair; ordinary resume stays strict. Its manifest records
+`compile_seed` and `compilation_attempts`; `generation_attempts` stays empty.
 
 For one offline model repair of an old complete draft, use `--offline
 --repair-build build-the-builder/out/RUN_FOLDER`. The slot and all ordered

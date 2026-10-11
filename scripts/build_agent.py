@@ -73,17 +73,19 @@ def source(path):
             "lines": len(content.splitlines())}, content
 
 
-def resume_candidate(directory, sources, slot):
+def resume_candidate(directory, sources, slot, *, check_compiler=True):
     directory = directory.resolve()
     previous = json.loads((directory / "manifest.json").read_text())
     if previous.get("sources") != sources:
         raise ValueError("Resume sources do not match the saved manifest in order, path, hash and line count.")
+    if check_compiler and "compiler_source" in previous and previous["compiler_source"] != source(ROOT / "builder/compiler.py")[0]:
+        raise ValueError("Resume compiler source does not match; recompile offline instead.")
     if previous.get("slot") != slot:
         raise ValueError("Resume must use the saved workflow slot.")
     commit = previous.get("code_commit")
     if not isinstance(commit, str) or not commit.strip():
         raise ValueError("Resume manifest has no generation code commit.")
-    attempts = previous.get("generation_attempts")
+    attempts = previous.get("generation_attempts") or previous.get("compilation_attempts")
     if not isinstance(attempts, list) or not attempts or not isinstance(attempts[-1], dict):
         raise ValueError("Resume manifest has no recorded generation attempt.")
     attempt = attempts[-1].get("attempt")
@@ -110,7 +112,7 @@ def repair_candidate(directory, sources, slot):
         if current["path"] != "builder/prompt.md" and old != current:
             raise ValueError("Repair seed brief/API/platform sources must match exactly.")
     # Only this separate repair path permits a changed compiler prompt.
-    metadata, raw = resume_candidate(directory, old_sources, slot)
+    metadata, raw = resume_candidate(directory, old_sources, slot, check_compiler=False)
     metadata["seeded_at"] = metadata.pop("reused_at")
     metadata["sources"] = old_sources
     return metadata, parse_model_output(raw)
@@ -252,6 +254,7 @@ def main():
     parser.add_argument("--offline", action="store_true", help="Generate and validate without Freya access")
     parser.add_argument("--resume-build", type=Path, help="Reuse the last complete saved candidate with identical sources; no generation or repair")
     parser.add_argument("--repair-build", type=Path, help="One offline model repair of a same-brief/API draft; current inputs remain authoritative")
+    parser.add_argument("--compile-build", type=Path, help="Compile a same-input saved draft with source-owned gates, offline without a model call")
     parser.add_argument("--model", default="gpt-6.1-sol", help="Builder model; default: gpt-6.1-sol")
     parser.add_argument("--brief", choices=["A", "B"], default="A", help="Official scorer brief filter")
     parser.add_argument("--only", default="PUB-01", help="Comma-separated official case ids")
@@ -260,6 +263,8 @@ def main():
     args = parser.parse_args()
     if args.repair_build and (not args.offline or args.resume_build):
         parser.error("--repair-build requires --offline and cannot be combined with --resume-build")
+    if args.compile_build and (not args.offline or args.resume_build or args.repair_build):
+        parser.error("--compile-build requires --offline and cannot be combined with resume or model repair")
     if not 1 <= args.budget_seconds <= 1800:
         parser.error("--budget-seconds must be between 1 and 1800")
     if args.reps < 1:
@@ -335,20 +340,24 @@ def main():
             command += ["--model", args.model]
         command.append("-")
         from builder.validation import validate
+        from builder.compiler import compile_candidate
+        manifest["compiler_source"] = source(ROOT / "builder/compiler.py")[0]
         model_prompt, all_events, candidate = prompt, [], None
-        if args.repair_build:
+        if args.repair_build or args.compile_build:
             lock = (KIT / ".builder.lock").open("a")
             try:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 raise RuntimeError("Another builder owns the local workspace lock.") from None
-            seed, candidate = repair_candidate(args.repair_build, sources, slot)
+            seed, candidate = repair_candidate(args.repair_build or args.compile_build, sources, slot)
             if not isinstance(candidate, dict) or set(candidate) != {"policy", "workflow", "checks", "uncertainties", "summary"}:
                 raise ValueError("Repair seed must be a complete candidate.")
-            manifest["repair_seed"] = seed
-            event("candidate_seeded_for_model_repair", **seed)
+            manifest["compile_seed" if args.compile_build else "repair_seed"] = seed
+            event("candidate_seeded_for_compilation" if args.compile_build else "candidate_seeded_for_model_repair", **seed)
             seed_report = validate(candidate["workflow"], candidate["policy"], openapi, candidate["checks"], brief_lines=brief_lines)
             write_json(folder / "seed-validation.json", seed_report)
+            if args.compile_build:
+                raw_text = json.dumps(candidate)
             model_prompt = (prompt + "\n=== UNTRUSTED STARTING DRAFT (NOT A RULE SOURCE) ===\n"
                             + redact(json.dumps(candidate)) + "\n=== CURRENT VALIDATION ERRORS ===\n"
                             + redact(json.dumps(seed_report))
@@ -360,10 +369,10 @@ def main():
             manifest["resume_build"] = reuse
             event("candidate_reused", **reuse)
             print("Revalidating the saved candidate; no model generation or repair.", flush=True)
-        for attempt in ((1,) if args.resume_build or args.repair_build else (1, 2, 3)):
-            output_format = "merge_patch" if candidate is not None else "full_candidate"
+        for attempt in ((1,) if args.resume_build or args.repair_build or args.compile_build else (1, 2, 3)):
+            output_format = "compiled_candidate" if args.compile_build else "merge_patch" if candidate is not None else "full_candidate"
             raw_path = folder / "raw.json"
-            if not args.resume_build:
+            if not args.resume_build and not args.compile_build:
                 purpose = ("Repair an untrusted same-input draft against the current compiler contract." if args.repair_build else
                            "Extract sourced policy and generate the portable workflow and local checks." if attempt == 1
                            else "Repair the generated candidate using validation errors and the same complete source inputs.")
@@ -387,12 +396,16 @@ def main():
             (folder / f"raw-attempt-{attempt}.json").write_text(redact(raw_text))
             try:
                 raw = parse_model_output(raw_text)
-                if candidate is not None:
+                if candidate is not None and not args.compile_build:
                     raw = merge_patch(candidate, raw)
                 if not isinstance(raw, dict) or set(raw) != {"policy", "workflow", "checks", "uncertainties", "summary"}:
                     raise ValueError("Model result must contain exactly policy/workflow/checks/uncertainties/summary.")
                 if not isinstance(raw["uncertainties"], list) or any(not isinstance(item, str) for item in raw["uncertainties"]) or not isinstance(raw["summary"], str):
                     raise ValueError("Model uncertainties must be a string list and summary must be a string.")
+                if not args.resume_build:
+                    raw, changes = compile_candidate(raw)
+                    event("workflow_compiled", attempt=attempt, compiler_source=manifest["compiler_source"], changes=changes)
+                    manifest["compiler_changes"] = changes
                 candidate = raw
                 write_json(raw_path, raw)
                 write_json(folder / f"candidate-attempt-{attempt}.json", raw)
@@ -444,6 +457,8 @@ def main():
                 event("freya_validation", attempt=attempt, valid=not dry_run_failed)
             if args.resume_build:
                 manifest["resume_validation"] = {"valid": valid, "errors": report.get("errors", [])}
+            elif args.compile_build:
+                manifest["compilation_attempts"] = [{"attempt": attempt, "valid": valid, "errors": report.get("errors", [])}]
             else:
                 manifest["generation_attempts"].append({"attempt": attempt, "model": model, "valid": valid,
                                                          "output_format": output_format,
