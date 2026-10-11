@@ -909,7 +909,11 @@ def _independent_checks(nodes, snippets, security, checks, policy=None, openapi=
 
     def unmarked_correction(field, marker):
         state = valid_readback()
-        original = copy.deepcopy(state)
+        original_fingerprint = state[roles["offer_fingerprint"]]
+        original, original_target = confirm(copy.deepcopy(state))
+        if original_target not in record_nodes or original.get(authorization) != authorized:
+            raise ValueError("original readback could not authorize a valid request")
+        original_request = bound_request(original_target, original)
         changed_amount = full_amount if float(fixture[roles["proposed_amount"]]) != float(full_amount) else float(full_amount) + 1
         value = str(changed_amount) if field == "amount" else (proposal_day + datetime.timedelta(days=1)).isoformat()
         state[authorization] = authorized
@@ -935,7 +939,6 @@ def _independent_checks(nodes, snippets, security, checks, policy=None, openapi=
             # Revalidation may offer the same deadline; freshness comes from the cleared state and graph.
             if not fingerprint or fingerprint != state.get(roles["offer_fingerprint"]):
                 raise ValueError("changed current approval did not produce a fresh matching readback")
-            readback = copy.deepcopy(state)
             waiting, target = advance(approval, copy.deepcopy(state))
             assert_denied(waiting)
             if target in record_nodes:
@@ -943,11 +946,9 @@ def _independent_checks(nodes, snippets, security, checks, policy=None, openapi=
             state, target = confirm(state)
             if target not in record_nodes or state.get(authorization) != authorized:
                 raise ValueError("fresh explicit yes after corrected readback could not record")
-            request = bound_request(target, readback)
-            if request != bound_request(target, original) and fingerprint == original[roles["offer_fingerprint"]]:
+            request = bound_request(target, state)
+            if request != original_request and fingerprint == original_fingerprint:
                 raise ValueError("changed accepted offer reused the old readback fingerprint")
-            if bound_request(target, state) != request:
-                raise ValueError("fresh confirmation changed the revalidated bank request")
         else:
             if state.get(roles["readback_fingerprint"]):
                 raise ValueError("changed current approval skipped the actual readback node")

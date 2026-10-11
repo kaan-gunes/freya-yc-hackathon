@@ -115,6 +115,21 @@ class FocusedApprovalRetryTests(unittest.TestCase):
                 with self.subTest(field=field, marker=marker):
                     self.assert_failed_probe(arguments, f"independent_approval_{field}_{marker}_correction_marker")
 
+    def test_write_fields_may_be_bound_only_after_fresh_yes(self):
+        for day in ("2026-10-14", "2026-10-20"):
+            with self.subTest(day=day):
+                arguments = deadline_candidate(day)
+                code = snippet(arguments, "approval")
+                assignment = "    vars['record_authorization'] = 'authorized'\n"
+                code["default"] = code["default"].replace(assignment, assignment + "".join(
+                    f"    vars['approved_{role}'] = vars['validated_{role}']\n" for role in ("product", "amount", "date")))
+                fields = arguments[0]["nodes"]["record"]["pre_actions"][0]["function"]["parameters"]["properties"]["body"]["properties"]
+                for field, role in (("product_id", "product"), ("amount", "amount"), ("date", "date")):
+                    fields[field]["default"] = "{{approved_" + role + "}}"
+                    arguments[1]["security"]["trusted_variables"].append("approved_" + role)
+                report = validate(*arguments)
+                self.assertTrue(report["ok"], report)
+
     def test_skipped_error_hook_reaches_one_real_retry_and_success(self):
         report = validate(*candidate())
         for name in ("independent_api_error_500_skipped_hook_retry", "independent_api_error_500_skipped_hook_then_success", "independent_failed_record_retry_limit", "independent_failed_record_then_success", "independent_unknown_record_no_retry", "independent_stale_record_status_no_retry", "independent_missing_record_status_no_retry", "independent_missing_record_body_no_retry", "independent_api_error_504_without_no_write_guarantee"):
