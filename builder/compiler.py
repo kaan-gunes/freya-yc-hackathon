@@ -36,7 +36,8 @@ def _kaan_clear_confirmation(text):
     # shortcut: unfamiliar consent wording asks again; expand only with observed safe replies.
     month = r'(?:january|february|march|april|may|june|july|august|september|october|november|december)'
     day = r'[0-9]{1,2}(?:st|nd|rd|th)?'
-    date = rf'(?:today|tomorrow|(?:next |this )?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)|{month} {day}(?:,? [0-9]{{4}})?|{day} (?:of )?{month}(?:,? [0-9]{{4}})?|[0-9]{{4}}-[0-9]{{1,2}}-[0-9]{{1,2}}|[0-9]{{1,2}}/[0-9]{{1,2}}(?:/[0-9]{{2,4}})?)'
+    year, short_year, day_number = r'[0-9]{4}', r'[0-9]{2,4}', r'[0-9]{1,2}'
+    date = rf'(?:today|tomorrow|(?:next |this )?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)|{month} {day}(?:,? {year})?|{day} (?:of )?{month}(?:,? {year})?|{year}-{day_number}-{day_number}|{day_number}/{day_number}(?:/{short_year})?)'
     numeric = rf'[0-9]+(?:[.,][0-9]+)?(?: dollars| euros| pounds)? on {date}'
     clause = rf'(?:{assent}|{action}|i can pay {objects}|use {objects}|{polite}|{numeric})'
     return bool(re.fullmatch(rf'{assent}(?:[,.!; ]+{clause})*', text))

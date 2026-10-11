@@ -1,9 +1,16 @@
+import inspect
 import unittest
 
 from builder.compiler import _kaan_clear_confirmation, _kaan_question_kind
+from builder.validation import _parse
 
 
 class CompilerIntentChecks(unittest.TestCase):
+    def test_embedded_helpers_pass_the_portable_python_boundary(self):
+        for helper in (_kaan_clear_confirmation, _kaan_question_kind):
+            with self.subTest(helper=helper.__name__):
+                _parse(inspect.getsource(helper))
+
     def test_clear_current_consent_includes_polite_long_replies(self):
         for text in (
             "Yes.",
