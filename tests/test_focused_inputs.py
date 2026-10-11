@@ -87,7 +87,7 @@ class FocusedInputTests(unittest.TestCase):
         self.assertTrue(any(check["name"] == "independent_identity_date_words_day_first" for check in report["checks"]))
         self.assertFalse(any("identity_code" in check["name"] for check in report["checks"]))
 
-    def test_text_identity_still_runs_required_question_and_blank_speech_checks(self):
+    def text_identity(self):
         arguments = candidate()
         workflow, policy, openapi, _ = arguments
         security = policy["security"]
@@ -102,12 +102,71 @@ class FocusedInputTests(unittest.TestCase):
             body["properties"]["field"]["enum"] = ["birthplace"]
         code = workflow["nodes"]["decision"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]
         code["default"] = code["default"].replace("        if vars.get('stage') == 'identity_phone':", "        if vars.get('stage') == 'identity_text':\n            vars['verification_answer'] = answer.strip()\n            vars['verification_question'] = 'birthplace'\n            vars['route'] = 'verify'\n        elif vars.get('stage') == 'identity_phone':")
+        return arguments
+
+    def identity_memo(self):
+        arguments = self.text_identity()
+        old = next(rule for rule in arguments[1]["source_rules"] if rule["id"] == "A11")
+        old.update(text=candidate()[1]["source_rules"][-1]["text"], replaced_by="M1")
+        memo = {"id": "M1", "source": "memo.md", "line": 1, "stage": "identity",
+                "text": "Replace Brief A rule 11: Ask one security question: birthplace. Never ask DOB.", "replaces": ["A11"]}
+        arguments[1]["source_rules"].append(memo)
+        arguments[1]["security"]["identity_questions"][0]["source_rule"] = "M1"
+        lines = [""] * 11
+        for rule in arguments[1]["source_rules"][:-1]:
+            lines[rule["line"] - 1] = rule["text"]
+        lines[0] = "# Brief A: Synthetic identity specification"
+        lines[10] = "11. " + old["text"]
+        return arguments, {"brief.md": lines, "memo.md": ["1. " + memo["text"]]}
+
+    def test_later_sourced_identity_memo_replaces_old_questions_without_removing_evidence(self):
+        for relation in ("both", "replaces", "replaced_by"):
+            with self.subTest(relation=relation):
+                arguments, lines = self.identity_memo()
+                if relation == "replaces":
+                    del arguments[1]["source_rules"][-2]["replaced_by"]
+                elif relation == "replaced_by":
+                    del arguments[1]["source_rules"][-1]["replaces"]
+                report = validate(*arguments, brief_lines=lines)
+                self.assertTrue(report["ok"], report)
+                self.assertEqual(len(arguments[1]["source_rules"]), 4)
+                self.assertFalse(any("identity_date" in check["name"] or "identity_code" in check["name"] for check in report["checks"]))
+                self.assertTrue(next(check["ok"] for check in report["checks"] if check["name"] == "independent_required_identity_question_0"))
+
+    def test_identity_override_metadata_cannot_erase_source_requirements(self):
+        for fault in ("no_sources", "same_source", "lower_priority", "invented_text", "wrong_rule", "wrong_brief", "unknown_id", "duplicate_id"):
+            with self.subTest(fault=fault):
+                arguments, lines = self.identity_memo()
+                memo = arguments[1]["source_rules"][-1]
+                if fault == "no_sources":
+                    lines = None
+                elif fault == "same_source":
+                    memo.update(source="brief.md", line=11)
+                elif fault == "lower_priority":
+                    lines = dict(reversed(list(lines.items())))
+                elif fault == "invented_text":
+                    lines["memo.md"] = ["1. Ask one security question: birthplace."]
+                elif fault == "wrong_rule":
+                    lines["memo.md"][0] = lines["memo.md"][0].replace("rule 11", "rule 12")
+                elif fault == "wrong_brief":
+                    lines["memo.md"][0] = lines["memo.md"][0].replace("Brief A", "Brief Z")
+                elif fault == "unknown_id":
+                    memo["replaces"] = ["missing"]
+                else:
+                    memo["id"] = "A11"
+                report = validate(*arguments, brief_lines=lines)
+                self.assertFalse(report["ok"], report)
+                self.assertTrue(any("identity replacement" in error or "unique IDs" in error for error in report["errors"]), report)
+
+    def test_text_identity_still_runs_required_question_and_blank_speech_checks(self):
+        arguments = self.text_identity()
         report = validate(*arguments)
         self.assertTrue(report["ok"], report)
         names = {check["name"] for check in report["checks"]}
         self.assertIn("independent_required_identity_question_0", names)
         self.assertIn("independent_missing_identity_text_speech_0", names)
         self.assertFalse(any("identity_date" in name or "identity_code" in name for name in names))
+        code = arguments[0]["nodes"]["decision"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]
         code["default"] = code["default"].replace("vars['verification_question'] = 'birthplace'", "vars['verification_question'] = 'phone_last4'")
         self.assert_rejected(arguments, "invalid field enum")
 

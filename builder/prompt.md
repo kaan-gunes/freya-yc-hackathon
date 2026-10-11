@@ -44,6 +44,10 @@ backslashes. In a snippet's JSON string a regex backslash must be doubled.
 {id, source, line, text, stage}. Use the source label and line numbers attached to
 the input. Keep overwritten rules with a replaces/replaced_by annotation. Every
 rule must be implemented, or named explicitly in unsupported with a reason.
+Replacement links are rule IDs (a string or list). A replaced rule stays in the
+evidence, but identity_questions includes only active rules. Link a replacement
+only when a later input explicitly replaces that original numbered rule; quote
+the memo's reference (for example, "Replace Brief X rule N") in its source text.
 `policy.unsupported` is an array, empty for a complete single-product candidate.
 
 Include `policy.security` with these exact keys, referring to actual workflow IDs:

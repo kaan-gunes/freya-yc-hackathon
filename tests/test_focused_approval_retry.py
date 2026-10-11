@@ -51,13 +51,27 @@ class FocusedApprovalRetryTests(unittest.TestCase):
 
     def test_skipped_error_hook_reaches_one_real_retry_and_success(self):
         report = validate(*candidate())
-        for name in ("independent_api_error_500_skipped_hook_retry", "independent_api_error_500_skipped_hook_then_success", "independent_failed_record_retry_limit", "independent_unknown_record_no_retry", "independent_stale_record_status_no_retry", "independent_missing_record_status_no_retry", "independent_missing_record_body_no_retry", "independent_api_error_504_without_no_write_guarantee"):
+        for name in ("independent_api_error_500_skipped_hook_retry", "independent_api_error_500_skipped_hook_then_success", "independent_failed_record_retry_limit", "independent_failed_record_then_success", "independent_unknown_record_no_retry", "independent_stale_record_status_no_retry", "independent_missing_record_status_no_retry", "independent_missing_record_body_no_retry", "independent_api_error_504_without_no_write_guarantee"):
             with self.subTest(probe=name):
                 self.assertTrue(next(check["ok"] for check in report["checks"] if check["name"] == name), report)
         arguments = candidate()
         code = snippet(arguments, "record_result")
         code["default"] = code["default"].replace("status_code == '500'", "status_code == '501'")
         self.assert_failed_probe(arguments, "independent_api_error_500_skipped_hook_retry")
+
+    def test_business_failure_retry_preserves_every_approved_request_field(self):
+        for field, value in (("product", "other-product"), ("amount", 999), ("date", "2026-10-15")):
+            with self.subTest(field=field):
+                arguments = candidate()
+                code = snippet(arguments, "record_result")
+                code["default"] += f"if status == 'success' and ok == 'false':\n    vars['validated_{field}'] = {value!r}\n"
+                report = validate(*arguments)
+                self.assertFalse(report["ok"], report)
+                for name in ("independent_failed_record_retry_limit", "independent_failed_record_then_success"):
+                    probe = next(check for check in report["checks"] if check["name"] == name)
+                    self.assertFalse(probe["ok"], report)
+                    self.assertIn("immutable approved bank request", probe["error"])
+                self.assertTrue(next(check["ok"] for check in report["checks"] if check["name"] == "independent_api_error_500_skipped_hook_retry"))
 
     def test_old_hook_only_graph_is_rejected(self):
         arguments = candidate()

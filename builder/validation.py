@@ -381,6 +381,8 @@ def _condition(condition, state):
 
 def _identity_requirements(policy, brief_lines):
     rules = {rule["id"]: rule for rule in policy.get("source_rules", []) if isinstance(rule, dict) and isinstance(rule.get("id"), str)}
+    if len(rules) != len(policy.get("source_rules", [])):
+        raise ValueError("identity source rules need unique IDs")
     sources = {name: rule.get("text", "") for name, rule in rules.items()}
     if brief_lines is not None:
         sources = {}
@@ -390,6 +392,33 @@ def _identity_requirements(policy, brief_lines):
             if type(line) is int and 1 <= line <= len(lines):
                 end = next((index for index in range(line, len(lines)) if re.match(r"^\s*(?:\d+\.\s|#{1,6}\s)", lines[index])), len(lines))
                 sources[name] = "\n".join(lines[line - 1:end])
+    superseded = set()
+    priority = {source: index for index, source in enumerate(brief_lines or {})}
+    for name, rule in rules.items():
+        for relation in ("replaces", "replaced_by"):
+            links = rule.get(relation, [])
+            links = [links] if isinstance(links, str) else links
+            if not isinstance(links, list) or any(not isinstance(link, str) or link not in rules for link in links):
+                raise ValueError("identity replacement must reference known source rule IDs")
+            for link in links:
+                old, new = (link, name) if relation == "replaces" else (name, link)
+                old_source, new_source = rules[old].get("source"), rules[new].get("source")
+                if (old not in sources or new not in sources or old_source not in priority or
+                        new_source not in priority or priority[new_source] <= priority[old_source]):
+                    raise ValueError("identity replacement needs original sources and higher input priority")
+                number = re.match(r"^\s*(\d+)\.\s", sources[old])
+                # shortcut: explicit numbered-rule replacements, extend for a new supplied memo format.
+                reference = re.search(r"\b(?:replace[sd]?|supersede[sd]?|override[sd]?)\s+(?:(brief\s+\w+)\s+)?rule\s+(\d+)\b", sources[new], re.I)
+                if not number or not reference or reference[2] != number[1]:
+                    raise ValueError("identity replacement lacks an explicit original-source rule reference")
+                if reference[1] and not any(re.match(r"^#+\s+" + re.escape(reference[1]) + r"\b", line, re.I) for line in brief_lines[old_source]):
+                    raise ValueError("identity replacement references a different source brief")
+                earlier_matches = [key for key, text in sources.items()
+                                   if priority.get(rules[key].get("source"), len(priority)) < priority[new_source]
+                                   and re.match(r"^\s*" + number[1] + r"\.\s", text)]
+                if not reference[1] and len(earlier_matches) != 1:
+                    raise ValueError("identity replacement has an ambiguous source rule reference")
+                superseded.add(old)
     patterns = {
         "date": r"\b(?:date of birth|birth date|birthdate|dob)\b",
         "numeric_code": r"\b(?:last (?:\w+|[0-9]+) digits|numeric (?:code|answer)|(?:[0-9]+|four|six)[ -]digit (?:code|pin)|pin code)\b",
@@ -400,6 +429,8 @@ def _identity_requirements(policy, brief_lines):
     count_pattern = r"\bask\s+(one|two|three|four|[0-9]+)\s+security questions?\b"
     numbers = {"one": 1, "two": 2, "three": 3, "four": 4}
     for name, text in sources.items():
+        if name in superseded:
+            continue
         if rules[name].get("stage") != "identity" and not re.search(count_pattern, text, re.I):
             continue
         required_text = re.sub(r"\b(?:never|do not|don't)\s+ask[^.!?]*(?:[.!?]|$)", "", text, flags=re.I)
@@ -413,7 +444,7 @@ def _identity_requirements(policy, brief_lines):
             for text in lines:
                 if re.search(count_pattern, text, re.I) and not any(text in source for source in sources.values()):
                     raise ValueError("identity_questions omitted a required identity source rule")
-    return sources, required, counts, patterns
+    return {name: text for name, text in sources.items() if name not in superseded}, required, counts, patterns
 
 
 def _independent_checks(nodes, snippets, security, checks, policy=None, openapi=None, brief_lines=None, close_tool=None):
@@ -961,23 +992,31 @@ def _independent_checks(nodes, snippets, security, checks, policy=None, openapi=
     run("independent_missing_record_status_no_retry", lambda: record_result({}, True, True, True))
     run("independent_missing_record_body_no_retry", lambda: record_result({"status": "success", "status_code": 200}, True, True, True))
 
-    def retry_limit():
+    def retry_limit(recovered=False):
         limit = security.get("write_attempt_limit")
         if type(limit) is not int or limit < 1:
             raise ValueError("security.write_attempt_limit must be a positive integer")
         state, target = confirm(valid_readback())
+        approved_request = bound_request(target, state)
         failure = {"status": "success", "status_code": 200, "data": {"ok": False}}
         state, target = complete_record(target, state, failure)
         if limit > 1:
             if target not in record_nodes or state.get(authorization) != authorized or int(state.get(roles["write_attempts"], 0)) != 2:
                 raise ValueError("allowed retry did not preserve authorization and count one new attempt")
-            state, target = complete_record(target, state, failure)
+            if bound_request(target, state) != approved_request:
+                raise ValueError("retry changed the immutable approved bank request")
+            result = {"status": "success", "status_code": 200, "data": {"ok": True}} if recovered else failure
+            state, target = complete_record(target, state, result)
+            if recovered and state.get(roles["recorded"]) != "recorded":
+                raise ValueError("successful second attempt did not mark the promise recorded")
         assert_denied(state)
         if target in record_nodes:
             raise ValueError("failed record exceeded source write attempt limit")
         if int(state.get(roles["write_attempts"], 0)) > limit:
             raise ValueError("failed record exceeded source write attempt limit")
     run("independent_failed_record_retry_limit", retry_limit)
+    if security.get("write_attempt_limit", 1) > 1:
+        run("independent_failed_record_then_success", lambda: retry_limit(True))
 
     def sourced_error_statuses():
         statuses = set()
