@@ -110,6 +110,75 @@ def compiled_report(value):
 
 
 class ServiceWorkflowTests(unittest.TestCase):
+    def test_independent_consent_uses_matching_tested_current_event(self):
+        value = candidate()
+        gate = value['policy']['security']['action_guards']['adjustItem']
+        positive = copy.deepcopy(gate['fixture'])
+        del gate['fixture']['raw_event']
+        value['checks'].append({'name': 'current-consent', 'node_id': 'entry',
+                                'vars': positive, 'expected': {'authorization': 'allow'}})
+        _, _, report = compiled_report(value)
+        self.assertTrue(report['ok'], report['errors'])
+        self.assertTrue(all(item['ok'] for item in report['checks']))
+
+    def test_independent_result_context_is_consistent_and_never_copies_api_proof(self):
+        value = candidate()
+        result = value['policy']['security']['api_results']['action']
+        del result['fixture']['slot']
+        result_code = value['workflow']['nodes']['result']['pre_actions'][0]['function']['parameters']['properties']['code']
+        result_code['default'] += "\nif vars.get('slot') != 2:\n    vars['current_success'] = ''\n"
+        positive = copy.deepcopy(value['policy']['security']['action_guards']['adjustItem']['fixture'])
+        value['checks'].append({'name': 'current-consent', 'node_id': 'entry',
+                                'vars': positive, 'expected': {'authorization': 'allow'}})
+        value['checks'][0]['vars']['slot'] = 2
+        _, _, report = compiled_report(value)
+        self.assertTrue(report['ok'], report['errors'])
+        conflict = copy.deepcopy(value)
+        other = copy.deepcopy(positive)
+        other['slot'] = 3
+        conflict['checks'].append({'name': 'other-current-context', 'node_id': 'entry',
+                                   'vars': other, 'expected': {'authorization': 'allow'}})
+        _, _, report = compiled_report(conflict)
+        self.assertFalse(report['ok'])
+        self.assertTrue(any('current_success' in error for error in report['errors']), report['errors'])
+
+    def test_nullable_required_result_is_present_and_missing_still_fails(self):
+        value = candidate()
+        schema = value['openapi']['paths']['/items']['post']['responses']['200']['content']['application/json']['schema']
+        schema['required'].append('diagnostic')
+        schema['properties']['diagnostic'] = {'type': 'string', 'nullable': True}
+        value['policy']['security']['api_results']['action']['required_response_fields'].append('data.diagnostic')
+        value['policy']['security']['api_results']['action']['success_result']['data']['diagnostic'] = None
+        value['checks'][0]['vars']['action_response.data']['diagnostic'] = None
+        compiled, _, report = compiled_report(value)
+        self.assertTrue(report['ok'], report['errors'])
+        code = compiled['workflow']['nodes']['result']['pre_actions'][0]['function']['parameters']['properties']['code']['default']
+        for body in [{'receipt': 'synthetic', 'state': 'committed'}, {'receipt': None, 'state': 'committed', 'diagnostic': None}]:
+            _run_check(code, {'vars': {'action_response.status_code': 200, 'action_response.data': body},
+                              'expected': {'current_success': '', 'speech': 'İşlem tamamlanmadı.'}})
+
+    def test_service_compiler_adds_metadata_and_uses_declared_literal_retry(self):
+        value = candidate()
+        value['policy']['security']['code_failure_node'] = 'retry'
+        entry = value['workflow']['nodes']['entry']
+        entry['passthrough_default_transition'] = 'result'
+        entry['max_turn_transition'] = 'result'
+        del entry['pre_actions'][0]['function']['description']
+        _, _, report = compiled_report(value)
+        self.assertTrue(report['ok'], report['errors'])
+
+    def test_only_empty_evidence_clears_are_allowed_at_the_declared_api_entry(self):
+        for raw in ["None", "''", "200", "'success'"]:
+            value = candidate()
+            code = value['workflow']['nodes']['entry']['pre_actions'][0]['function']['parameters']['properties']['code']
+            code['default'] += "vars['action_response.status_code'] = " + raw + "\n"
+            _, _, report = compiled_report(value)
+            self.assertEqual(report['ok'], raw in ["None", "''"], report['errors'])
+        value = candidate()
+        value['workflow']['nodes']['reset']['pre_actions'][0]['function']['parameters']['properties']['code']['default'] += "\nvars['action_response.status_code'] = None"
+        _, _, report = compiled_report(value)
+        self.assertFalse(report['ok'])
+
     def test_request_allof_preserves_envelope_fields_required_and_value_constraints(self):
         value = candidate()
         operation = value['openapi']['paths']['/items']['post']
@@ -176,6 +245,10 @@ class ServiceWorkflowTests(unittest.TestCase):
 
     def test_one_field_turkish_consent_is_bounded_and_portable(self):
         _parse(inspect.getsource(_service_clear_confirmation))
+        self.assertTrue(_service_clear_confirmation('Evet, gönderin.', ['evet gönderin']))
+        self.assertTrue(_service_clear_confirmation('Evet gönderin.', ['evet, gönderin']))
+        self.assertFalse(_service_clear_confirmation('Evet, gönderin mi?', ['evet gönderin']))
+        self.assertFalse(_service_clear_confirmation('Evet, gönderin ama başka adrese.', ['evet gönderin']))
         phrases = ['gönderin', 'tarihi onaylıyorum']
         for raw in ['yes', 'Evet, lütfen.', 'Evet gönderin', 'Tarihi onaylıyorum', 'Evet, gönderin, teşekkürler.']:
             self.assertTrue(_service_clear_confirmation(raw, phrases), raw)

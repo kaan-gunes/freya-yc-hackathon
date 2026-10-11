@@ -154,6 +154,21 @@ def _service_value(raw, path):
     return value
 
 
+def _service_has_path(raw, path):
+    import json
+    value = raw
+    for part in path.split('.') if path else []:
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except Exception:
+                return False
+        if not isinstance(value, dict) or part not in value:
+            return False
+        value = value[part]
+    return True
+
+
 def _service_request_text(text):
     import re
     text = str(text or '').lower().replace('i̇', 'i').translate(str.maketrans('çğıöşü', 'cgiosu')).strip()
@@ -210,7 +225,8 @@ def _service_schema_definition(value, document, seen=()):
 def _service_clear_confirmation(text, phrases):
     import re
     def fold(value):
-        return re.sub(r'\s+', ' ', str(value or '').lower().replace('i̇', 'i').translate(str.maketrans('çğıöşü', 'cgiosu'))).strip(' .,!?;:')
+        value = str(value or '').lower().replace('i̇', 'i').translate(str.maketrans('çğıöşü', 'cgiosu'))
+        return re.sub(r'\s+', ' ', re.sub(r'[,\.!;:]+', ' ', value)).strip(' ?')
     raw = str(text or '')
     text = fold(raw)
     if '?' in raw or re.search(r"\b(?:no|not|don't|do not|cannot|can't|maybe|perhaps|if|unless|but|earlier|previously|already|hayir|degil|istemiyorum|onaylamiyorum|belki|eger|ama|fakat|ancak|once|onceden|demistim|yanlis|vazgectim)\b", text):
@@ -235,6 +251,20 @@ def _compile_service(compiled, openapi=None):
                     operation = _resolve(operation, openapi)
                     operations[operation.get('operationId', path.strip('/').replace('/', '_'))] = operation
     changes = []
+    fallback = security.get('code_failure_node')
+    retry = nodes.get(fallback, {})
+    retry_text = retry.get('on_enter', {}).get('text', '')
+    literal_retry = (retry.get('node_type') == 'conversation' and isinstance(retry_text, str)
+                     and retry_text.strip() and '{{' not in retry_text and not retry.get('tools'))
+    for node in nodes.values():
+        for action in node.get('pre_actions', []):
+            function = action.get('function', {})
+            if function.get('handler') in ('__function__:code_exec', '__function__:api_call') and not str(function.get('description') or '').strip():
+                function['description'] = 'Execute the declared workflow action.'
+        if node.get('node_type') == 'code' and literal_retry:
+            node['passthrough_default_transition'] = fallback
+            if 'max_turn_transition' in node:
+                node['max_turn_transition'] = fallback
     for name, gate in security.get('action_guards', {}).items():
         code = _snippet(nodes[gate['node']])
         authorization = gate['variable']
@@ -281,7 +311,7 @@ def _compile_service(compiled, openapi=None):
                     f"_service_current_body = copy.deepcopy(vars.get({(prefix + '.data')!r}))\n"
                     f"_service_current_values = " + '{path: copy.deepcopy(vars.get(' + repr(prefix + '.') + ' + path)) for path in ' + repr(snapshot_paths) + '}')
         original, head = _section(code['default'], 'SERVICE RESULT INPUT ' + api_node, snapshot)
-        body = inspect.getsource(_service_value)
+        body = inspect.getsource(_service_value) + '\n' + inspect.getsource(_service_has_path)
         body += f"\n_service_status = _service_current_status\n_service_body = _service_current_body\n_service_result_valid = _service_status in {[str(status) for status in result['success_statuses']]!r}"
         operation_name = nodes[api_node]['pre_actions'][0]['function']['name']
         operation = operations.get(operation_name)
@@ -304,7 +334,7 @@ def _compile_service(compiled, openapi=None):
         for path in result.get('required_response_fields', []):
             field = prefix + '.' + path
             relative = path[5:] if path.startswith('data.') else path
-            body += f"\n_service_value_now = _service_current_values.get({path!r})\nif _service_value_now is None or _service_value_now == '':\n    _service_value_now = _service_value(_service_body, {relative!r})\nif _service_value_now is None:\n    _service_result_valid = False"
+            body += f"\n_service_value_now = _service_current_values.get({path!r})\nif _service_value_now is None or _service_value_now == '':\n    _service_value_now = _service_value(_service_body, {relative!r})\nif _service_value_now is None and not _service_has_path(_service_body, {relative!r}):\n    _service_result_valid = False"
         if business:
             path, expected = business['path'], business['operand']
             field, relative = prefix + '.' + path, path[5:] if path.startswith('data.') else path

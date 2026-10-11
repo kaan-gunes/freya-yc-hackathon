@@ -1962,7 +1962,7 @@ def _validate_service(workflow, policy, openapi, checks, brief_lines):
                     if variable == prefix or variable.startswith(prefix + '.'):
                         for value in _authorization_values(tree, variable):
                             if (identifier != result.get('entry_node') or not isinstance(value, ast.Constant)
-                                    or value.value != '' or value.lineno not in owned_lines):
+                                    or value.value not in ('', None)):
                                 fail(identifier + ': engine response evidence is read-only outside its source-owned reset')
             for variable, gate in authorizations.items():
                 if identifier != gate.get('node'):
@@ -2104,6 +2104,32 @@ def _validate_service(workflow, policy, openapi, checks, brief_lines):
             report['error'] = str(exc)
             fail('check ' + report['name'] + ': ' + str(exc))
         reports.append(report)
+    def fixture_context(fixture, node=None, assertion=None):
+        """Recover only consistent, tested input context; never current API proof."""
+        blocked = {gate['variable'] for gate in gates.values()}
+        for result in results.values():
+            blocked.update(result.get(key) for key in ('success_variable', 'route_variable', 'speech_variable'))
+        allowed = (context | trusted | (extracted if node is not None else set())) - blocked
+        additions, conflicts = {}, set()
+        prefixes = [result.get('response_prefix', key + '_response') for key, result in results.items()]
+        for check in checks:
+            if node is not None and check['node_id'] != node:
+                continue
+            if assertion is not None and not _json_equal(check['expected'].get(assertion[0]), assertion[1]):
+                continue
+            values = check['vars']
+            shared = (set(fixture) & set(values) & allowed)
+            if not shared or any(not _json_equal(fixture[key], values[key]) for key in shared):
+                continue
+            for key in (set(values) & allowed) - set(fixture):
+                if any(key == prefix or key.startswith(prefix + '.') for prefix in prefixes):
+                    continue
+                if key in additions and not _json_equal(additions[key], values[key]):
+                    conflicts.add(key)
+                else:
+                    additions[key] = copy.deepcopy(values[key])
+        return {**{key: value for key, value in additions.items() if key not in conflicts}, **copy.deepcopy(fixture)}
+
     def probe(name, node, state, expected):
         report = {'name': name, 'node_id': node, 'ok': False}
         try:
@@ -2176,7 +2202,7 @@ def _validate_service(workflow, policy, openapi, checks, brief_lines):
             if not gate.get('consent_required', True):
                 continue
             text, event, authorization = gate['text_field'], gate['event_field'], gate['variable']
-            valid = copy.deepcopy(gate['fixture'])
+            valid = fixture_context(gate['fixture'], gate['node'], (gate['variable'], gate['operand']))
             valid[text] = gate['valid_text']
             probe('independent_service_' + name + '_current_consent', gate['node'], valid,
                   lambda output, gate=gate: require(output.get(gate['variable']) == gate['operand'], 'current valid consent did not authorize'))
@@ -2201,7 +2227,7 @@ def _validate_service(workflow, policy, openapi, checks, brief_lines):
         for node, result in results.items():
             prefix = result.get('response_prefix', node + '_response')
             def state_for(envelope, result=result, prefix=prefix):
-                state = copy.deepcopy(result['fixture'])
+                state = fixture_context(result['fixture'])
                 for field in list(state):
                     if field == prefix or field.startswith(prefix + '.'):
                         del state[field]
