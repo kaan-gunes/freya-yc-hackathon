@@ -1,5 +1,6 @@
 """Independent approval and real record-graph checks; no bank or model calls."""
 
+import datetime
 import unittest
 
 from builder.validation import _run_check, validate
@@ -8,6 +9,21 @@ from tests.test_builder_validation import candidate
 
 def snippet(arguments, node):
     return arguments[0]["nodes"][node]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]
+
+
+def deadline_candidate(day="2026-10-20"):
+    arguments = candidate()
+    arguments[1]["security"]["validation_fixture"]["date"] = day
+    code = snippet(arguments, "offer")
+    code["default"] = code["default"].replace(
+        "    day = payment_day(vars.get('date', ''))\n",
+        "    day = payment_day(vars.get('date', ''))\n"
+        "    deadline = datetime.date.fromisoformat(vars['deadline'])\n"
+        "    while day.weekday() >= 5 and day < deadline:\n"
+        "        day += datetime.timedelta(days=1)\n"
+        "    day = min(day, deadline)\n",
+    )
+    return arguments
 
 
 class FocusedApprovalRetryTests(unittest.TestCase):
@@ -48,6 +64,56 @@ class FocusedApprovalRetryTests(unittest.TestCase):
                     state = _run_check(code("offer"), {"vars": state, "expected": {"route": "confirmation", "record_authorization": "", "validated_" + field: float(value) if field == "amount" else value}})["vars"]
                     state.update(approval="yes", approval_text="Yes, I confirm.")
                     _run_check(code("approval"), {"vars": state, "expected": {"route": "record", "record_authorization": "authorized", "write_attempts": 1}})
+
+    def test_date_correction_revalidates_interior_weekend_and_same_deadline(self):
+        for day, accepted in (("2026-10-14", "2026-10-15"), ("2026-10-16", "2026-10-19"), ("2026-10-20", "2026-10-20")):
+            arguments = deadline_candidate(day)
+            report = validate(*arguments)
+            self.assertTrue(report["ok"], report)
+            code = lambda node: snippet(arguments, node)["default"]
+            for marker in ("", "no"):
+                with self.subTest(day=day, marker=marker):
+                    state = _run_check(code("offer"), {"vars": arguments[1]["security"]["validation_fixture"], "expected": {"route": "confirmation"}})["vars"]
+                    original = state["readback_fingerprint"]
+                    later = (datetime.date.fromisoformat(day) + datetime.timedelta(days=1)).isoformat()
+                    state.update(record_authorization="authorized", approval="yes", correction=marker, approval_date=later, approval_text="Yes, use the later date.")
+                    state = _run_check(code("approval"), {"vars": state, "expected": {"route": "offer", "record_authorization": "", "offer_fingerprint": "", "readback_fingerprint": ""}})["vars"]
+                    state = _run_check(code("offer"), {"vars": state, "expected": {"route": "confirmation", "record_authorization": "", "validated_date": accepted}})["vars"]
+                    self.assertEqual(state["readback_fingerprint"] == original, day == accepted)
+                    _run_check(code("approval"), {"vars": state, "expected": {"route": "confirmation", "record_authorization": ""}})
+                    state.update(approval="yes", approval_text="Yes, I confirm.")
+                    _run_check(code("approval"), {"vars": state, "expected": {"route": "record", "record_authorization": "authorized", "validated_date": accepted}})
+
+    def test_same_deadline_rejects_stale_authority_fingerprints_and_missing_yes(self):
+        mutations = [
+            ("approval", "vars['record_authorization'] = ''\n", ""),
+            ("approval", "    vars['offer_fingerprint'] = ''\n", ""),
+            ("approval", "    vars['readback_fingerprint'] = ''\n", ""),
+            ("approval", "    vars['route'] = 'offer'\n", "    vars['route'] = 'confirmation'\n"),
+            ("approval", "event == 'yes' or vars.get('write_result') == 'failed'", "event in ('yes', '') or vars.get('write_result') == 'failed'"),
+        ]
+        for node, old, new in mutations:
+            with self.subTest(mutation=old):
+                arguments = deadline_candidate()
+                code = snippet(arguments, node)
+                self.assertIn(old, code["default"])
+                code["default"] = code["default"].replace(old, new)
+                for marker in ("missing", "wrong"):
+                    self.assert_failed_probe(arguments, f"independent_approval_date_{marker}_correction_marker")
+        arguments = deadline_candidate()
+        code = snippet(arguments, "offer")
+        code["default"] += "if vars.get('date', '') > vars['deadline']:\n    vars['route'] = 'end'\n"
+        for marker in ("missing", "wrong"):
+            self.assert_failed_probe(arguments, f"independent_approval_date_{marker}_correction_marker")
+
+    def test_changed_accepted_values_cannot_reuse_old_fingerprint(self):
+        arguments = deadline_candidate("2026-10-14")
+        code = snippet(arguments, "offer")
+        code["default"] = code["default"].replace("str(amount) + ':' + day.isoformat()", "'old-offer'")
+        for field in ("amount", "date"):
+            for marker in ("missing", "wrong"):
+                with self.subTest(field=field, marker=marker):
+                    self.assert_failed_probe(arguments, f"independent_approval_{field}_{marker}_correction_marker")
 
     def test_skipped_error_hook_reaches_one_real_retry_and_success(self):
         report = validate(*candidate())

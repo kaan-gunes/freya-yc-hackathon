@@ -909,9 +909,10 @@ def _independent_checks(nodes, snippets, security, checks, policy=None, openapi=
 
     def unmarked_correction(field, marker):
         state = valid_readback()
-        original = state[roles["offer_fingerprint"]]
+        original = copy.deepcopy(state)
         changed_amount = full_amount if float(fixture[roles["proposed_amount"]]) != float(full_amount) else float(full_amount) + 1
         value = str(changed_amount) if field == "amount" else (proposal_day + datetime.timedelta(days=1)).isoformat()
+        state[authorization] = authorized
         state.update(copy.deepcopy(confirmation))
         state[roles["approval_event"]] = events["yes"]
         state[roles["correction"]] = marker
@@ -931,10 +932,27 @@ def _independent_checks(nodes, snippets, security, checks, policy=None, openapi=
         assert_denied(state)
         if target in readbacks:
             fingerprint = state.get(roles["readback_fingerprint"])
-            if not fingerprint or fingerprint == original or fingerprint != state.get(roles["offer_fingerprint"]):
+            # Revalidation may offer the same deadline; freshness comes from the cleared state and graph.
+            if not fingerprint or fingerprint != state.get(roles["offer_fingerprint"]):
                 raise ValueError("changed current approval did not produce a fresh matching readback")
-        elif target not in security.get("close_nodes", []) and (nodes[target].get("node_type") != "conversation" or not nodes[target].get("extraction_schema")):
-            raise ValueError("invalid changed approval did not stop for clarification or safe closure")
+            readback = copy.deepcopy(state)
+            waiting, target = advance(approval, copy.deepcopy(state))
+            assert_denied(waiting)
+            if target in record_nodes:
+                raise ValueError("corrected readback reached recording without a new explicit yes")
+            state, target = confirm(state)
+            if target not in record_nodes or state.get(authorization) != authorized:
+                raise ValueError("fresh explicit yes after corrected readback could not record")
+            request = bound_request(target, readback)
+            if request != bound_request(target, original) and fingerprint == original[roles["offer_fingerprint"]]:
+                raise ValueError("changed accepted offer reused the old readback fingerprint")
+            if bound_request(target, state) != request:
+                raise ValueError("fresh confirmation changed the revalidated bank request")
+        else:
+            if state.get(roles["readback_fingerprint"]):
+                raise ValueError("changed current approval skipped the actual readback node")
+            if target not in security.get("close_nodes", []) and (nodes[target].get("node_type") != "conversation" or not nodes[target].get("extraction_schema")):
+                raise ValueError("invalid changed approval did not stop for clarification or safe closure")
     for field in ("amount", "date"):
         for marker, label in (("", "missing"), ("no", "wrong")):
             run(f"independent_approval_{field}_{label}_correction_marker", lambda field=field, marker=marker: unmarked_correction(field, marker))
