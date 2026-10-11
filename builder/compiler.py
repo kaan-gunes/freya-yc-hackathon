@@ -256,15 +256,15 @@ elif vars.get({event!r}) == {events['yes']!r}:
         preserved.update(conversation.get('state', {}).values())
         code = _snippet(nodes[decision])
         body = f"""_kaan_missing_payment_text = vars.get({roles['stage']!r}) == {payment_stage!r} and vars.get({security['bank_verification_variable']!r}) == {security['bank_gate']['operand']!r} and vars.get({roles['decision_event']!r}) == {events.get('non_answer', 'non_answer')!r} and not str(vars.get({roles['speech_text']!r}) or '').strip() and not vars.get({roles['decision_amount']!r}) and not vars.get({roles['decision_date']!r})
-_kaan_missing_payment_state = {{name: vars[name] for name in {sorted(preserved)!r} if name in vars}} if _kaan_missing_payment_text else {{}}
+_kaan_missing_payment_state = vars.copy() if _kaan_missing_payment_text else {{}}
 if _kaan_missing_payment_text:
     vars[{roles['decision_event']!r}] = ''
     vars[{roles['speech_text']!r}] = ''
 """
         original, prefix = _section(code['default'], 'MISSING PAYMENT INPUT', body.rstrip())
+        restore = '\n'.join(f"    if {name!r} in _kaan_missing_payment_state:\n        vars[{name!r}] = _kaan_missing_payment_state[{name!r}]" for name in sorted(preserved))
         body = f"""if _kaan_missing_payment_text:
-    for name, value in _kaan_missing_payment_state.items():
-        vars[name] = value
+{restore}
     vars[{authorization!r}] = ''
     vars[{roles['decision_event']!r}] = ''
     vars[{roles['speech_text']!r}] = ''

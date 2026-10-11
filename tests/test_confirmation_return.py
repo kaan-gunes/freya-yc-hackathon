@@ -4,7 +4,7 @@ import re
 import unittest
 
 from builder.compiler import compile_candidate
-from builder.validation import _condition, _graph_checks, _run_check
+from builder.validation import _condition, _graph_checks, _parse, _run_check, _writes
 from tests.test_builder_validation import guard, route
 from tests.test_focused_conversation import snippet
 from tests.test_v7_conversation import conversation_candidate
@@ -174,6 +174,7 @@ class ConfirmationReturnTests(unittest.TestCase):
         compiled, _ = compile_candidate(interrupted_candidate())
         repeated, _ = compile_candidate(compiled)
         self.assertEqual(repeated, compiled)
+        _writes(_parse(snippet(compiled['workflow'], 'decision')))
 
     def test_missing_non_answer_text_preserves_the_offer_and_asks_again(self):
         original = interrupted_candidate()
