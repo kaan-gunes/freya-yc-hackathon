@@ -44,6 +44,74 @@ def candidate():
     identity = "data = result.get('data', {})\nvars['bank_status'] = 'verified' if data.get('ok') is True and data.get('all_verified') is True else 'unverified'\nif vars['bank_status'] == 'verified':\n    vars['stage'] = 'account_pending'\n"
     decision = r"""import datetime
 import re
+
+small = 'zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen'.split()
+tens = 'zero ten twenty thirty forty fifty sixty seventy eighty ninety'.split()
+
+def small_number(raw):
+    words = raw.split()
+    if raw in small:
+        return small.index(raw)
+    if len(words) == 1 and words[0] in tens[2:]:
+        return tens.index(words[0]) * 10
+    if len(words) == 2 and words[0] in tens[2:] and words[1] in small[1:10]:
+        return tens.index(words[0]) * 10 + small.index(words[1])
+    return None
+
+def hundred_number(raw):
+    match = re.fullmatch(r'(one|two|three|four|five|six|seven|eight|nine) hundred(?: (?:and )?(.+))?', raw)
+    if not match:
+        return small_number(raw)
+    tail = small_number(match.group(2)) if match.group(2) else 0
+    return small.index(match.group(1)) * 100 + tail if tail is not None else None
+
+def spoken_year(raw):
+    raw = raw.replace('-', ' ').strip()
+    if re.fullmatch(r'[0-9]{4}', raw):
+        return int(raw)
+    match = re.fullmatch(r'(one|two|three|four|five|six|seven|eight|nine) thousand(?: (?:and )?(.+))?', raw)
+    if match:
+        tail = hundred_number(match.group(2)) if match.group(2) else 0
+        return small.index(match.group(1)) * 1000 + tail if tail is not None else None
+    cardinal = hundred_number(raw)
+    if cardinal is not None:
+        return cardinal
+    words = raw.split()
+    for cut in (1, 2):
+        century = small_number(' '.join(words[:cut]))
+        tail_text = ' '.join(words[cut:])
+        tail = 0 if tail_text == 'hundred' else small_number(tail_text[3:]) if tail_text.startswith('oh ') else small_number(tail_text)
+        if century is not None and 10 <= century <= 99 and tail is not None:
+            return century * 100 + tail
+    return None
+
+def spoken_dob(raw):
+    ordinals = 'zero first second third fourth fifth sixth seventh eighth ninth tenth eleventh twelfth thirteenth fourteenth fifteenth sixteenth seventeenth eighteenth nineteenth'.split()
+    days = {word: index for index, word in enumerate(ordinals[1:], 1)}
+    days['twentieth'] = 20
+    days['thirtieth'] = 30
+    for number in range(21, 32):
+        if number != 30:
+            days[tens[number // 10] + ' ' + ordinals[number % 10]] = number
+    months = 'january february march april may june july august september october november december'.split()
+    raw = re.sub(r'(\d)(st|nd|rd|th)\b', r'\1', raw).replace('-', ' ').replace(',', ' ')
+    raw = re.sub(r'\s+', ' ', raw).strip()
+    raw = re.sub(r'^the ', '', raw)
+    month_pattern = '(' + '|'.join(months) + ')'
+    match = re.fullmatch(r'(.+?)(?: of)? ' + month_pattern + r' (.+)', raw)
+    if match:
+        day_text, month_text, year_text = match.groups()
+    else:
+        match = re.fullmatch(month_pattern + r' ([0-9]{1,2}) (.+)', raw)
+        if not match:
+            raise ValueError('complete named-month date required')
+        month_text, day_text, year_text = match.groups()
+    day_number = int(day_text) if day_text.isdigit() else days.get(day_text)
+    year_number = spoken_year(year_text)
+    if day_number is None or year_number is None:
+        raise ValueError('complete day and year required')
+    return datetime.date(year_number, months.index(month_text) + 1, day_number)
+
 event = vars.get('speech_event', '')
 current_date = vars.get('speech_date', '')
 current_amount = vars.get('speech_amount', '')
@@ -85,12 +153,7 @@ elif party == 'confirmed' and answer and event == 'yes':
             try:
                 day = datetime.date.fromisoformat(clean)
             except ValueError:
-                words = re.sub(r'(\d)(st|nd|rd|th)\b', r'\1', clean).replace(',', '').split()
-                months = 'january february march april may june july august september october november december'.split()
-                if words[0].isdigit():
-                    day = datetime.date(int(words[2]), months.index(words[1]) + 1, int(words[0]))
-                else:
-                    day = datetime.date(int(words[2]), months.index(words[0]) + 1, int(words[1]))
+                day = spoken_dob(clean)
             vars['verification_answer'] = day.isoformat()
             vars['verification_question'] = 'date_of_birth'
             vars['route'] = 'verify'
@@ -99,16 +162,38 @@ elif party == 'confirmed' and answer and event == 'yes':
 """
     offer = r"""import datetime
 import re
+
+def payment_day(raw):
+    try:
+        return datetime.date.fromisoformat(raw)
+    except ValueError:
+        weekdays = 'monday tuesday wednesday thursday friday saturday sunday'.split()
+        match = re.fullmatch(r'(monday|tuesday|wednesday|thursday|friday|saturday|sunday) the ([0-9]{1,2})(?:st|nd|rd|th)', raw.lower().strip())
+        if not match:
+            raise ValueError('complete weekday and ordinal required')
+        start = datetime.datetime.fromisoformat(vars['now']).date()
+        end = datetime.date.fromisoformat(vars['deadline'])
+        weekday = weekdays.index(match.group(1))
+        ordinal = int(match.group(2))
+        matches = []
+        for offset in range((end - start).days + 1):
+            candidate = start + datetime.timedelta(days=offset)
+            if candidate.day == ordinal and candidate.weekday() == weekday:
+                matches.append(candidate)
+        if len(matches) != 1:
+            raise ValueError('weekday ordinal must resolve uniquely in the proposal window')
+        return matches[0]
+
 vars['record_authorization'] = ''
 vars['offer_fingerprint'] = ''
 vars['readback_fingerprint'] = ''
 vars['route'] = 'end'
 try:
-    day = datetime.date.fromisoformat(vars.get('date', ''))
+    day = payment_day(vars.get('date', ''))
     raw_amount = str(vars.get('amount', 0)).strip()
     currency = re.fullmatch(r'([+-]?(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?)\s+dollars', raw_amount)
     amount = float(currency.group(1) if currency else raw_amount)
-    if 20 <= amount < float('inf') and '2026-10-14' <= day.isoformat() <= '2026-10-20':
+    if 20 <= amount < float('inf') and '2026-10-14' <= day.isoformat() <= vars.get('deadline', '2026-10-20'):
         vars['amount'] = amount
         vars['validated_product'] = vars.get('bank_product', '')
         vars['validated_amount'] = amount
@@ -156,14 +241,14 @@ elif not vars.get('recorded') and vars.get('offer_fingerprint') and vars.get('of
     workflow["tools"][0]["config"]["alwaysRunsAt"] = ["end_of_call"]
     policy = {"security": {
         "customer_id_field": "customer_id", "customer_id_variable": "customer_id",
-        "identity_nodes": ["identity"], "trusted_variables": ["bank_status", "bank_full_amount", "record_authorization", "recorded", "validated_product", "validated_amount", "validated_date", "offer_fingerprint", "readback_fingerprint", "exception", "route", "stage", "write_attempts", "write_result", "persuasion_attempts", "party_confirmation", "verification_answer", "verification_question", "code_length", "transfer_authorization", "transfer_queue"],
+        "identity_nodes": ["identity"], "trusted_variables": ["bank_status", "bank_full_amount", "deadline", "record_authorization", "recorded", "validated_product", "validated_amount", "validated_date", "offer_fingerprint", "readback_fingerprint", "exception", "route", "stage", "write_attempts", "write_result", "persuasion_attempts", "party_confirmation", "verification_answer", "verification_question", "code_length", "transfer_authorization", "transfer_queue"],
         "bank_verification_variable": "bank_status", "bank_gate": {"node": "decision", "variable": "bank_status", "operand": "verified", "target": "account"},
         "account_nodes": ["account"], "offer_guard_node": "offer", "approval_guard_node": "approval", "confirmation_nodes": ["confirmation"], "record_nodes": ["record"], "close_nodes": ["end"],
         "decision_node": "decision", "write_attempt_limit": 2, "party_confirmation_operand": "confirmed", "identity_answer_request_field": "answer", "validation_identity_request_context": {"field": "date_of_birth"}, "validation_identity_code_request_context": {"field": "phone_last4"},
         "validation_state": {"proposed_amount": "amount", "proposed_date": "date", "approval_event": "approval", "correction": "correction", "decision_event": "speech_event", "decision_date": "speech_date", "decision_amount": "speech_amount", "full_amount": "bank_full_amount", "identity_answer": "speech_answer", "speech_text": "speech_text", "persuasion_attempts": "persuasion_attempts", "party_confirmation": "party_confirmation", "recorded": "recorded", "offer_fingerprint": "offer_fingerprint", "readback_fingerprint": "readback_fingerprint", "exception": "exception", "route": "route", "stage": "stage", "write_attempts": "write_attempts", "write_result": "write_result"},
         "validation_events": {name: name for name in ("yes", "no", "question", "human", "plan", "hardship", "dispute", "third_party")},
         "validation_routes": {name: name for name in ("account", "confirmation", "record", "offer", "transfer", "end")},
-        "validation_fixture": {"customer_id": "c-fixture", "amount": "25", "date": "2026-10-14", "bank_product": "p1", "bank_full_amount": 50, "now": "2026-10-14T09:00:00", "bank_status": "verified", "stage": "payment"},
+        "validation_fixture": {"customer_id": "c-fixture", "amount": "25", "date": "2026-10-14", "deadline": "2026-10-20", "bank_product": "p1", "bank_full_amount": 50, "now": "2026-10-14T09:00:00", "bank_status": "verified", "stage": "payment"},
         "validation_confirmation_fixture": {"approval": "yes", "correction": ""},
         "validation_correction_fixture": {"approval": "yes", "correction": "yes"},
         "validation_identity_fixture": {"bank_status": "verified", "stage": "identity", "speech_event": "question"},
@@ -674,6 +759,47 @@ class ValidationTests(unittest.TestCase):
         for label in ("nan", "infinity"):
             self.assert_rejected(arguments, "independent_invalid_currency_amount_" + label)
 
+    def test_weekday_ordinal_payment_dates_use_current_and_shared_guard_paths(self):
+        arguments = candidate()
+        report = validate(*arguments)
+        self.assertTrue(report["ok"], report)
+        for name in ("independent_current_weekday_ordinal_record", "independent_shared_weekday_ordinal_record"):
+            self.assertTrue(next(check["ok"] for check in report["checks"] if check["name"] == name), report)
+        code = arguments[0]["nodes"]["offer"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]["default"]
+        state = dict(arguments[1]["security"]["validation_fixture"], date="Wednesday the 14th")
+        _run_check(code, {"vars": state, "expected": {"validated_date": "2026-10-14", "validated_amount": 25.0, "route": "confirmation"}})
+        arguments[1]["security"]["validation_fixture"].update(now="2026-10-30T09:00:00", date="2026-11-02", deadline="2026-11-10")
+        self.assertTrue(validate(*arguments)["ok"])
+
+    def test_weekday_ordinal_payment_dates_reject_wrong_weekdays_and_ambiguous_windows(self):
+        arguments = candidate()
+        code = arguments[0]["nodes"]["offer"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]
+        code["default"] = code["default"].replace("candidate.day == ordinal and candidate.weekday() == weekday", "candidate.day == ordinal")
+        for label in ("current", "shared"):
+            self.assert_rejected(arguments, f"independent_{label}_mismatched_weekday_denied")
+        arguments = candidate()
+        code = arguments[0]["nodes"]["offer"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]["default"]
+        state = dict(arguments[1]["security"]["validation_fixture"], now="2027-02-01T09:00:00", deadline="2027-03-31", date="Tuesday the 2nd")
+        _run_check(code, {"vars": state, "expected": {"route": "end", "record_authorization": "", "offer_fingerprint": "", "readback_fingerprint": ""}})
+        for raw in ("Please pay Wednesday the 14th", "Wednesday the 14th after work", "Wednesday the 32nd"):
+            with self.subTest(raw=raw):
+                state = dict(arguments[1]["security"]["validation_fixture"], date=raw)
+                _run_check(code, {"vars": state, "expected": {"route": "end", "offer_fingerprint": ""}})
+
+    def test_weekday_ordinal_payment_dates_need_parser_and_canonical_record_binding(self):
+        arguments = candidate()
+        code = arguments[0]["nodes"]["offer"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]
+        code["default"] = code["default"].replace("day = payment_day(vars.get('date', ''))", "day = datetime.date.fromisoformat(vars.get('date', ''))")
+        for label in ("current", "shared"):
+            self.assert_rejected(arguments, f"independent_{label}_weekday_ordinal_record")
+        arguments = candidate()
+        code = arguments[0]["nodes"]["offer"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]
+        code["default"] = code["default"].replace("vars['validated_date'] = day.isoformat()", "vars['validated_date'] = vars.get('date')")
+        self.assert_rejected(arguments, "promise did not bind the original canonical date")
+        arguments = candidate()
+        arguments[1]["security"]["validation_fixture"]["date"] = "today"
+        self.assert_rejected(arguments, "validation_fixture must provide a canonical ISO proposed_date")
+
     def test_spoken_identity_dates_reach_verify_with_the_original_iso_answer(self):
         arguments = candidate()
         report = validate(*arguments)
@@ -743,6 +869,44 @@ class ValidationTests(unittest.TestCase):
         report = validate(*arguments)
         self.assertTrue(all(check["ok"] for check in report["checks"] if check["name"].startswith("independent_identity_date_words_") or check["name"] == "independent_identity_date_in_main_date"), report)
         self.assert_rejected(arguments, "independent_missing_identity_speech: unsafe chain entered verify")
+
+    def test_fully_spoken_identity_dates_include_word_ordinals_and_years(self):
+        arguments = candidate()
+        report = validate(*arguments)
+        self.assertTrue(report["ok"], report)
+        checks = [check for check in report["checks"] if check["name"].startswith("independent_identity_word_date_")]
+        self.assertEqual(len(checks), 8)
+        self.assertTrue(all(check["ok"] for check in checks), report)
+        for date in ("2004-02-29", "2000-03-30", "1905-11-21"):
+            with self.subTest(date=date):
+                arguments[1]["security"]["validation_identity_answer_fixture"]["speech_answer"] = date
+                self.assertTrue(validate(*arguments)["ok"])
+        code = arguments[0]["nodes"]["decision"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]["default"]
+        for raw in ("the thirty-first of February nineteen ninety", "the twelfth of April", "April nineteen ninety"):
+            with self.subTest(raw=raw):
+                state = dict(arguments[1]["security"]["validation_identity_answer_fixture"], speech_answer=raw)
+                _run_check(code, {"vars": state, "expected": {"route": "listen", "bank_status": "unverified", "speech_answer": ""}})
+
+    def test_fully_spoken_identity_dates_cannot_require_a_digit_year(self):
+        arguments = candidate()
+        code = arguments[0]["nodes"]["decision"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]
+        code["default"] = code["default"].replace("                day = spoken_dob(clean)", "                if not re.search(r'\\b[0-9]{4}\\b', clean):\n                    raise ValueError('digit year required')\n                day = spoken_dob(clean)")
+        report = validate(*arguments)
+        old_checks = [check for check in report["checks"] if check["name"].startswith("independent_identity_date_words_") or "_in_speech_text_" in check["name"]]
+        self.assertTrue(all(check["ok"] for check in old_checks), report)
+        word_checks = [check for check in report["checks"] if check["name"].startswith("independent_identity_word_date_")]
+        self.assertEqual(len(word_checks), 8)
+        self.assertTrue(all(not check["ok"] for check in word_checks), report)
+        self.assert_rejected(arguments, "complete spoken identity date did not reach a verification API action")
+
+    def test_missing_spoken_identity_year_cannot_use_cached_year_or_answer(self):
+        arguments = candidate()
+        code = arguments[0]["nodes"]["decision"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]
+        code["default"] = code["default"].replace("    raw = re.sub(r'^the ', '', raw)", "    raw = re.sub(r'^the ', '', raw)\n    if raw.split()[-1] in months:\n        raw += ' ' + str(vars.get('verification_answer', '1990-04-12'))[:4]")
+        report = validate(*arguments)
+        self.assertTrue(all(check["ok"] for check in report["checks"] if check["name"].startswith("independent_identity_word_date_") or check["name"] == "independent_missing_identity_speech"), report)
+        for label in ("answer", "speech_text"):
+            self.assert_rejected(arguments, "independent_missing_identity_year_" + label)
 
     def test_full_text_identity_paths_preserve_dates_and_leading_zero_codes(self):
         arguments = candidate()

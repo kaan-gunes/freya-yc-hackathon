@@ -78,7 +78,8 @@ validation_events: {yes, no, question, human, plan, hardship, dispute, third_par
 validation_routes: {account, confirmation, record, offer, transfer, end}
   # Values are actual route operands written by code.
 write_attempt_limit: maximum explicit record attempts from the brief/API
-validation_fixture: {complete synthetic vars for a valid offer before offer guard}
+validation_fixture: {complete synthetic vars for a valid offer before offer guard,
+                     with its proposed_date already canonical YYYY-MM-DD}
 validation_confirmation_fixture: {fresh confirmation speech fields for explicit yes}
 validation_correction_fixture: {fresh confirmation speech with correction=yes
                                 and the valid fixture's same amount/date stated}
@@ -164,7 +165,10 @@ Trim bounded surrounding whitespace and sentence punctuation (including '.' and
 '._') before exact parsing. Accept a simple answer prefix for the pending
 question, such as "My date of birth is" or "My last four digits are"; do not search
 arbitrary prose for digits. Preserve leading zeros in numeric security codes and
-check their sourced length. Parsing failures never count as bank rejections.
+check their sourced length. A DOB needs an explicit complete year, but that year
+may be spoken in words; do not require four raw digits after a successful word
+parse. Never supply today's year for a partial DOB. Parsing failures never count
+as bank rejections.
 Describe the main date field as payment/callback only and explicitly exclude
 identity dates, but do not depend on this description to make the path work.
 
@@ -213,6 +217,10 @@ balance or earlier offer. If no exact payment date is agreed, ask for the date;
 do not ask again for a clearly accepted full amount or silently invent a date.
 Never turn a vague date into a silent concrete agreement. Counter updates must
 be per user decision, not per tool result or repeated node entry.
+Treat phrases such as "the week after next" as vague, not as a parsing failure
+or a refusal. Preserve the proposed amount and ask for the exact day once under
+the input rule. A subsequent complete date continues to the offer guard; it must
+not keep asking the clarification after that date was supplied.
 
 Use an offer guard code node to select the product from bank state and validate
 the proposed amount and date. Reject non-finite/negative amounts, out-of-policy
@@ -276,7 +284,10 @@ unknown results have honest speech and visible state; no false SMS/success claim
 
 Required success and SMS wording comes from the brief, fixed to the success
 branch. Required farewell comes from the brief. Select close outcome/reason in
-code from recorded actions and source priority. Preserve successful promises if
+code from recorded actions and source priority. A service-error flag requires an
+actual failed bank result; a successful account load must clear any provisional
+error flag. Parsing/clarification fallback is not a bank service failure.
+Preserve successful promises if
 a later transfer wins. No add_note unless the inputs require it. Do not add
 undocumented API calls or runtime services. Every runtime code snippet is embedded
 in the export, with no local files, external LLM service, or bank API beyond input.
@@ -311,6 +322,12 @@ Callback and transfer APIs are engine actions reached only after code validates
 the permitted time/date/enum and caller request. Do not invent success when these
 return a failed business result. Where inputs do not define recovery, list that
 specific limitation instead of presenting a fabricated policy as a rule.
+For a callback with a separately stated exact time, bounded date qualifiers such
+as "tomorrow morning" mean the same date as "tomorrow"; still validate that exact
+time against the source window. Do not invent a time from "morning". A complete
+valid callback reply must not consume the invalid-window budget. Include a
+generated regression with that raw date and a fresh exact time, reaching the
+actual schedule_callback request with canonical date and HH:MM bindings.
 Declare each action guard in security.action_guards. Its action has a single
 guarded incoming edge from that code node. Bind ALL non-customer action fields
 to trusted code variables; the guard validates even literal queue choices before
@@ -385,6 +402,17 @@ them. The shared date parser also accepts English month names in day-first and
 month-first order, with case differences, commas and ordinal days, such as
 "14 March 1988", "March 14th, 1988" and "14th march, 1988". Use explicit month
 names and datetime.date, without locale-dependent parsing or new dependencies.
+For complete spoken DOBs, also accept a bounded English grammar: ordinal day
+words (first through thirty-first), optional "the"/"of", a named month, and a
+complete grouped year ("nineteen ninety") or cardinal year ("one thousand nine
+hundred and ninety"). Treat hyphens as word separators. Match the whole answer,
+validate with datetime.date and return the canonical ISO date. This is a small
+date grammar, not arbitrary prose digit extraction or a general number parser.
+For payment dates, also accept a complete weekday-plus-ordinal day such as
+"Monday the 26th" when exactly one matching calendar date exists in the relevant
+call-based proposal range. Resolve the month/year from that bounded range and
+check the stated weekday before policy weekend/holiday adjustment; do not
+silently ignore a mismatched weekday. DOB parsing still needs its explicit year.
 Do not assume extraction normalizes a plain string: raw identity and payment
 dates both pass through this parser and become validated YYYY-MM-DD values.
 Trusted canonical dates may also be strings, checked by portable code.
@@ -469,6 +497,14 @@ action's resolved request answer to equal the same canonical ISO date. Supply
 the request context for this pending date question using the input's real API
 property and operand; the date must not be sent to a different security question.
 Add a generated regression for this path as well as split identity answers.
+The builder also tests complete word-day/word-year DOBs through both the raw
+identity answer and full speech text, including optional words and hyphens.
+The paired missing-year probes must return to a listener without verification;
+all other current speech is cleared, so no alternate field can hide a failure.
+Independent payment probes also send weekday-plus-ordinal dates through the
+current speech decision and shared offer guard; a mismatched weekday cannot
+become a recorded promise. Include source-calendar regressions for vague-date
+clarification followed by an exact holiday date and a fresh adjusted readback.
 Map decision_date to the actual untrusted main extracted date field read and
 cleared by decision code. The independent fallback check clears the identity
 answer and other speech, supplies the current word date only in decision_date,

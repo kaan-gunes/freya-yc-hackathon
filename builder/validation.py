@@ -438,6 +438,13 @@ def _independent_checks(nodes, snippets, security, checks):
             raise ValueError("invalid bank amount")
     except (TypeError, ValueError, OverflowError):
         contract_errors.append("validation_fixture must provide a finite positive numeric full_amount")
+    proposal_day = None
+    try:
+        proposal_day = datetime.date.fromisoformat(fixture.get(roles["proposed_date"]))
+        if proposal_day.isoformat() != fixture[roles["proposed_date"]]:
+            raise ValueError("noncanonical fixture date")
+    except (TypeError, ValueError):
+        contract_errors.append("validation_fixture must provide a canonical ISO proposed_date")
     if isinstance(third_party_fixture, dict) and not any(third_party_fixture.get(name) for name in decision_inputs - {roles["decision_event"]}):
         contract_errors.append("third-party fixture needs a nonempty actual speech field besides decision_event")
     canonical_identity_answer = None
@@ -639,12 +646,16 @@ def _independent_checks(nodes, snippets, security, checks):
             state[name] = ""
         return state
 
-    def record_amount(state, expected_amount):
+    def record_amount(state, expected_amount, expected_date=None):
         state, target = confirm(state)
         if target not in record_nodes or state.get(authorization) != authorized:
             raise ValueError("amount readback and current yes did not authorize a record action")
-        if not any(name == "create_promise" and _json_equal(body.get("amount"), expected_amount) for name, body in bound_request(target, state)):
+        requests = bound_request(target, state)
+        matching_amounts = [body for name, body in requests if name == "create_promise" and _json_equal(body.get("amount"), expected_amount)]
+        if not matching_amounts:
             raise ValueError("amount promise did not bind the original numeric amount")
+        if expected_date is not None and not any(body.get("date") == expected_date for body in matching_amounts):
+            raise ValueError("promise did not bind the original canonical date")
         state = step(f"{target}:create_promise:post", state, {"status": "success", "status_code": 200, "data": {"ok": True}})
         if state.get(roles["recorded"]) != "recorded":
             raise ValueError("successful amount result did not mark the product recorded")
@@ -663,6 +674,36 @@ def _independent_checks(nodes, snippets, security, checks):
         state[roles["proposed_amount"]] = f"{state[roles['proposed_amount']]} dollars"
         record_amount(valid_readback(state), expected_amount)
     run("independent_shared_currency_amount_record", shared_currency_amount)
+
+    weekdays = "Monday Tuesday Wednesday Thursday Friday Saturday Sunday".split()
+    proposal_suffix = "th" if 11 <= proposal_day.day % 100 <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(proposal_day.day % 10, "th")
+
+    def weekday_ordinal_state(current, mismatch=False):
+        state = full_amount_state(events["yes"], str(full_amount)) if current else copy.deepcopy(fixture)
+        weekday = weekdays[(proposal_day.weekday() + (1 if mismatch else 0)) % 7]
+        state[roles["decision_date"] if current else roles["proposed_date"]] = f"{weekday} the {proposal_day.day}{proposal_suffix}"
+        return state
+
+    def weekday_ordinal_record(current):
+        expected_amount = full_amount if current else float(fixture[roles["proposed_amount"]])
+        state = valid_readback(weekday_ordinal_state(current), decision if current else offer)
+        record_amount(state, expected_amount, proposal_day.isoformat())
+
+    def mismatched_weekday(current):
+        state = weekday_ordinal_state(current, True)
+        for name in (authorization, roles["recorded"], roles["offer_fingerprint"], roles["readback_fingerprint"]):
+            state[name] = ""
+        state, target = advance(decision if current else offer, state, (*readbacks, *record_nodes, *security.get("account_nodes", [])))
+        assert_denied(state)
+        if target not in security.get("close_nodes", []) and (nodes[target].get("node_type") != "conversation" or not nodes[target].get("extraction_schema")):
+            raise ValueError("mismatched weekday must return to a real listener or end safely")
+        state.update(copy.deepcopy(confirmation))
+        state[roles["approval_event"]] = events["yes"]
+        assert_denied(step(approval, state))
+
+    for current, label in ((True, "current"), (False, "shared")):
+        run(f"independent_{label}_weekday_ordinal_record", lambda current=current: weekday_ordinal_record(current))
+        run(f"independent_{label}_mismatched_weekday_denied", lambda current=current: mismatched_weekday(current))
 
     def inactive_full_amount(event):
         state, target = advance(decision, full_amount_state(event), (offer, *readbacks, *record_nodes, *security.get("account_nodes", [])))
@@ -858,6 +899,62 @@ def _independent_checks(nodes, snippets, security, checks):
         ("prefix", f"My date of birth is {day.day} {month} {day.year:04d}."),
     ):
         run(f"independent_identity_date_in_speech_text_{label}", lambda speech=speech: identity_request_boundary(current_identity_state(identity_answer_fixture, roles["speech_text"], speech), canonical_identity_answer, identity_request_context, "date"))
+
+    small_words = "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen".split()
+    tens_words = "zero ten twenty thirty forty fifty sixty seventy eighty ninety".split()
+    ordinal_words = "zero first second third fourth fifth sixth seventh eighth ninth tenth eleventh twelfth thirteenth fourteenth fifteenth sixteenth seventeenth eighteenth nineteenth".split()
+
+    def small_number_words(number):
+        return small_words[number] if number < 20 else tens_words[number // 10] + (" " + small_words[number % 10] if number % 10 else "")
+
+    def cardinal_year_words(year):
+        parts = []
+        if year // 1000:
+            parts.append(small_words[year // 1000] + " thousand")
+        if year % 1000 // 100:
+            parts.append(small_words[year % 1000 // 100] + " hundred")
+        if year % 100:
+            parts.append(("and " if parts else "") + small_number_words(year % 100))
+        return " ".join(parts)
+
+    def ordinal_day_words(number):
+        if number < 20:
+            return ordinal_words[number]
+        if number in (20, 30):
+            return "twentieth" if number == 20 else "thirtieth"
+        return tens_words[number // 10] + "-" + ordinal_words[number % 10]
+
+    grouped_year = cardinal_year_words(day.year)
+    if day.year >= 1000:
+        remainder = day.year % 100
+        grouped_year = small_number_words(day.year // 100) + (" hundred" if not remainder else " oh " + small_words[remainder] if remainder < 10 else " " + small_number_words(remainder))
+    ordinal_day = ordinal_day_words(day.day)
+    hyphen_day = day if day.day > 20 and day.day != 30 else day.replace(day=21 + (day.day - 1) % 8)
+    for label, raw, expected in (
+        ("ordinal", f"{ordinal_day} {month} {grouped_year}", day.isoformat()),
+        ("optional_words", f"the {ordinal_day} of {month} {grouped_year}", day.isoformat()),
+        ("hyphenated", f"the {ordinal_day_words(hyphen_day.day)} of {month} {grouped_year.replace(' ', '-')}", hyphen_day.isoformat()),
+        ("cardinal_year", f"My date of birth is the {ordinal_day} of {month} {cardinal_year_words(day.year)}.", day.isoformat()),
+    ):
+        for role, input_label in (("identity_answer", "answer"), ("speech_text", "speech_text")):
+            run(f"independent_identity_word_date_{input_label}_{label}", lambda raw=raw, expected=expected, role=role: identity_request_boundary(current_identity_state(identity_answer_fixture, roles[role], raw), expected, identity_request_context, "date"))
+
+    def missing_identity_year(role):
+        state = current_identity_state(identity_answer_fixture, roles[role], f"the {ordinal_day} of {month}.")
+        for _, tool in verification_requests:
+            field = tool.get("function", {}).get("parameters", {}).get("properties", {}).get("body", {}).get("properties", {}).get(answer_request_field, {})
+            value = field.get("default")
+            placeholder = PLACEHOLDER.fullmatch(value) if isinstance(value, str) else None
+            if placeholder and placeholder.group(1) not in decision_inputs:
+                state[placeholder.group(1)] = canonical_identity_answer
+        forbidden = (offer, *readbacks, *record_nodes, *security.get("account_nodes", []), *(identifier for identifier, _ in verification_requests))
+        state, target = advance(decision, state, forbidden)
+        assert_denied(state)
+        if nodes[target].get("node_type") != "conversation" or not nodes[target].get("extraction_schema"):
+            raise ValueError("identity date without a year must return to a real listener")
+    for role, label in (("identity_answer", "answer"), ("speech_text", "speech_text")):
+        run(f"independent_missing_identity_year_{label}", lambda role=role: missing_identity_year(role))
+
     code_prefix = "My last four digits are" if len(canonical_identity_code) == 4 else "My verification code is"
     for label, speech in (("period", canonical_identity_code + "."), ("prefix", code_prefix + " " + canonical_identity_code + ".")):
         run(f"independent_identity_code_in_speech_text_{label}", lambda speech=speech: identity_request_boundary(current_identity_state(identity_code_fixture, roles["speech_text"], speech), canonical_identity_code, identity_code_context, "code"))

@@ -15,8 +15,8 @@ Commit `65ec36a` covers fresh identity dates in the general date input, with a
 paired check that denies cached answers when all current speech is empty.
 Commit `46b658c` verifies fresh full-text identity answers safely and generated
 the tested version 5. Commit `cc9109d` adds the payment-parser follow-up.
-All 73 repository tests pass, and the builder self-check passes after the bounded
-GET transport-retry follow-up. Spoken-year regressions are still being added.
+All 79 repository tests pass, and the builder self-check passes after the bounded
+GET transport-retry and spoken-date follow-ups.
 Follow-up checks add normal identity completion, supplementary decision tests
 that cannot replace required guard tests, and three attempts within one deadline.
 
@@ -40,7 +40,7 @@ Follow-up checks reject silent extraction consuming persuasion, and a relative's
 identity answer after earlier first-party confirmation. Six new spoken-date
 checks send month-name, ordinal, comma and case variants through the actual
 decision and verification request. The resolved answer must be the same valid
-ISO date; account and record actions remain denied. The unit fixture has 55
+ISO date; account and record actions remain denied. The unit fixture has 69
 independent checks; the total depends on the candidate's secondary actions.
 A follow-up also checks the resolved request's sourced pending-question context,
 so a canonical date cannot be sent under a different security question. Its
@@ -70,6 +70,22 @@ new number-word framework or dependency was added. No currency field is declared
 in this Brief/OpenAPI; these probes cover the observed numeric "dollars" suffix,
 not currency conversion or general multi-currency support.
 
+Fourteen additional independent checks cover the wider batch's date failures.
+Eight complete word-DOB probes use ordinal day words, grouped/cardinal word
+years, optional "the/of" and hyphens through both identity and raw-text fields.
+Two missing-year probes seed a cached answer, clear all other current speech,
+and require a real listener without verification/account/payment actions.
+Two positive payment chains send a weekday-plus-ordinal date through the current
+decision and shared offer guard, then bind the original canonical date and exact
+amount in the record request after fresh approval. Two wrong-weekday chains
+remain denied even after a fresh yes. The generated fixture must supply a
+canonical ISO proposed_date; no new metadata fields were added.
+Six new repository tests include next-month resolution, ambiguous proposal
+windows, malformed dates/prose, raw numeric-year mutations and cached-year
+inference. Replaying v5 fails all eight word-DOB and both valid weekday probes,
+while the paired missing-year/wrong-weekday negatives pass. This proves the old
+parser gaps locally; it is not a new published score.
+
 The test helper saves session, simulation, iteration and call IDs early. It
 keeps execution, result reading and scoring separate, accumulates owned version
 evidence, and supports read-only recovery:
@@ -88,7 +104,7 @@ GET reads now retry recognized SSL EOF, timeout and connection-reset failures,
 using the existing four attempts and 2/4/8-second backoff. POST, certificate,
 DNS, authentication and malformed-JSON errors are not retried. Mock tests cover
 recovery, exhaustion and permanent failures; the official client and scorer are
-unchanged.
+unchanged. These changes were committed as `ddd5858`.
 
 ## Build
 
@@ -227,6 +243,19 @@ and PUB-09 (restructuring transfer) passed. All execution, result reads and
 official scoring completed, with owned version 5 evidence. An SSL EOF interrupted
 the initial GET poll. Read-only resume recovered the same existing simulation;
 no new sessions, personas or simulation POSTs were sent.
+
+PUB-01 extracted full-amount references, numeric amounts with a dollar suffix,
+then amounts in words. The guard's direct float conversion rejected them before
+date handling. PUB-02 supplied "tomorrow morning" and a correctly extracted
+11:00; the date qualifier caused two false invalid-window counts. PUB-07 supplied
+"the week after next", then "Monday the 26th" 66 times. The vague-date matcher
+missed the first phrase; the exact date parser rejected the second before the
+calendar could offer the next business day. No schema-write or extraction error
+was found for these three cases. Both payment loops ended at maximum duration,
+retaining provisional service-error defaults despite successful bank reads.
+They are parsing failures, not evidence of a bank outage. Generator follow-ups
+cover the bounded raw date forms, clarification return, and honest service-error
+state. These changes are not yet live evidence.
 
 Five failures (PUB-04/05/06/08/10) gave the DOB entirely in words: ordinal day,
 optional "the/of" and a named month, followed by a grouped spoken year. Some
