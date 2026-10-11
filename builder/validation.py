@@ -21,7 +21,7 @@ SAFE_MODULES = {
     "decimal": ("Decimal", "InvalidOperation", "ROUND_HALF_UP", "ROUND_DOWN"),
     "calendar": ("weekday", "monthrange", "day_name", "day_abbr", "month_name", "month_abbr"),
     "math": None,
-    "re": ("compile", "match", "fullmatch", "search", "findall", "sub", "split", "escape", "IGNORECASE"),
+    "re": ("compile", "match", "fullmatch", "search", "findall", "sub", "split", "escape", "IGNORECASE", "I"),
     "copy": ("copy", "deepcopy"),
 }
 SAFE_BUILTINS = {name: getattr(builtins, name) for name in (
@@ -1147,17 +1147,23 @@ def _independent_checks(nodes, snippets, security, checks, policy=None, openapi=
             body = _run_check(hook, {"vars": state, "config": {"body": body}, "expected": {}})["config"]["body"]
         return {name: body.get(name) for name in ("outcome", "reason")}
 
-    def pre_identity_exception(event, human=False):
+    def pre_identity_exception(event, human=False, relative=False, speech=""):
         state = copy.deepcopy(security.get("validation_pre_identity_human_fixture") if human else third_party_fixture)
         if not isinstance(state, dict) or not state:
             raise ValueError("pre-identity human fixture must contain a current insisting request")
         state[security.get("bank_verification_variable")] = "unverified"
         state[authorization] = ""
+        if not human and not relative:
+            for field in decision_inputs:
+                state[field] = ""
         baseline = copy.deepcopy(state)
-        for field in decision_inputs:
+        # A relative's speech and offered identity answer belong to both comparison states.
+        for field in (roles["decision_event"],) if relative else decision_inputs:
             baseline[field] = ""
         baseline = step(decision, baseline)
         state[roles["decision_event"]] = event
+        if not human:
+            state[roles["speech_text"]] = (str(state.get(roles["speech_text"], "")) + " " + speech).strip()
         state, target = advance(decision, state, (offer, *readbacks, *record_nodes, *security.get("account_nodes", []), *(identifier for identifier, _ in verification_requests)))
         assert_denied(state)
         node = nodes[target]
@@ -1176,8 +1182,10 @@ def _independent_checks(nodes, snippets, security, checks, policy=None, openapi=
             raise ValueError("pre-identity claim changed the actual stage-safe close outcome/reason")
 
     if forbidden_words:
-        for name in ("paid", "dispute", "plan"):
-            run(f"independent_pre_identity_{name}", lambda name=name: pre_identity_exception(events[name]))
+        for name, speech in (("paid", "I already paid."), ("dispute", "This debt is not mine."), ("plan", "I want a new payment plan.")):
+            for relative in (False, True):
+                suffix = "_relative" if relative else ""
+                run(f"independent_pre_identity_{name}{suffix}", lambda name=name, speech=speech, relative=relative: pre_identity_exception(events[name], relative=relative, speech=speech))
         run("independent_pre_identity_human", lambda: pre_identity_exception(events["human"], True))
 
     def identity_state(input_fixture=identity_answer_fixture):
