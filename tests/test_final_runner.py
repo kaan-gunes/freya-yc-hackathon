@@ -235,6 +235,9 @@ class FinalRunnerChecks(unittest.TestCase):
             self.assertEqual(validate.call_args.args[2]["servers"], [{"url": target}])
             if prose:
                 self.assertEqual(len(generated), 2)
+                self.assertIn("Request model and Called-with description define its mandatory service inputs", generated[0])
+                self.assertIn("Apply explicit optional/ignored-field exceptions", generated[0])
+                self.assertIn("required fields with enums", generated[0])
                 self.assertIn("inferred_schema_sha256", manifest)
                 self.assertTrue((folder / "contract-evidence.json").exists())
             else:
