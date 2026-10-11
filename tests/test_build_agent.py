@@ -1,4 +1,5 @@
 import copy
+import hashlib
 import importlib.util
 import json
 import os
@@ -16,6 +17,36 @@ import freya
 
 
 class BuildAgentChecks(unittest.TestCase):
+    def test_resume_revalidates_and_uses_existing_publish_readback_export_test_path(self):
+        self.run_mock_build(resume=True, dry_run_rejections=0)
+
+    def test_resume_rejects_each_changed_source_before_platform_access(self):
+        for index in range(6):
+            with self.subTest(source=index):
+                self.run_mock_build(resume=True, resume_failure=f"source-{index}", dry_run_rejections=0)
+
+    def test_resume_rejects_missing_sources_and_candidate_before_platform_access(self):
+        for failure in ("missing-source", "missing-candidate", "missing-manifest", "missing-manifest-source", "source-order",
+                        "slot", "commit", "attempt"):
+            with self.subTest(failure=failure):
+                self.run_mock_build(resume=True, resume_failure=failure, dry_run_rejections=0)
+
+    def test_resume_rejects_bad_candidate_or_provenance_before_platform_access(self):
+        for failure in ("json", "shape", "invalid", "provenance"):
+            with self.subTest(failure=failure):
+                self.run_mock_build(resume=True, resume_failure=failure, dry_run_rejections=0)
+
+    def test_resume_dry_run_rejection_stops_without_save_generation_or_repair(self):
+        self.run_mock_build(resume=True, resume_failure="dry-run", dry_run_rejections=1)
+
+    def test_resume_budget_expiry_stops_before_save(self):
+        self.run_mock_build(resume=True, resume_failure="budget", dry_run_rejections=0)
+
+    def test_resume_keeps_lock_readback_and_version_gates(self):
+        for failure in ("lock", "readback", "version"):
+            with self.subTest(failure=failure):
+                self.run_mock_build(resume=True, resume_failure=failure, dry_run_rejections=0)
+
     def test_dry_run_rejection_is_repaired_before_save(self):
         self.run_mock_build()
 
@@ -59,7 +90,8 @@ class BuildAgentChecks(unittest.TestCase):
         self.assertEqual(len(manifest["live_test"]["simulations"][0]["read_errors"]), 1)
 
     def run_mock_build(self, *, simulation_extra=None, raw_call=None, dry_run_rejections=1,
-                       repair_patches=None, expected_workflow=None, expected_checks=None, malformed_first=False):
+                       repair_patches=None, expected_workflow=None, expected_checks=None, malformed_first=False,
+                       resume=False, resume_failure=None):
         with tempfile.TemporaryDirectory() as directory:
             kit = Path(directory).resolve() / "kit"
             (kit / "docs").mkdir(parents=True)
@@ -71,6 +103,47 @@ class BuildAgentChecks(unittest.TestCase):
             candidate = {"policy": {"source_rules": [{"source": str(brief), "line": 1}]},
                          "workflow": {"nodes": {}}, "checks": [],
                          "uncertainties": [], "summary": "Synthetic mock."}
+            original_source = runner.source
+            source_paths = [brief, openapi, ROOT / "builder/prompt.md",
+                            *[kit / "docs" / name for name in ("workflow-format.md", "tools-and-code.md", "api.md")]]
+            previous = kit / "previous-run"
+            previous.mkdir()
+            old_manifest = {"sources": [original_source(path)[0] for path in source_paths],
+                            "slot": "kaan-brief", "code_commit": "original-generation-commit",
+                            "started_at": "2026-10-11T10:00:00+00:00", "elapsed_seconds": 1200,
+                            "generation_attempts": [{"attempt": 3}]}
+            if resume_failure == "missing-manifest-source":
+                old_manifest["sources"].pop()
+            if resume_failure == "source-order":
+                old_manifest["sources"].reverse()
+            if resume_failure == "slot":
+                old_manifest["slot"] = "different-slot"
+            if resume_failure == "commit":
+                old_manifest.pop("code_commit")
+            if resume_failure == "attempt":
+                old_manifest["generation_attempts"][-1]["attempt"] = "../candidate"
+            if resume_failure == "provenance":
+                candidate["policy"]["source_rules"] = []
+            if resume_failure == "shape":
+                candidate.pop("summary")
+            (previous / "manifest.json").write_text(json.dumps(old_manifest))
+            candidate_path = previous / "candidate-attempt-3.json"
+            candidate_path.write_text("broken JSON" if resume_failure == "json" else json.dumps(candidate))
+            original_candidate = candidate_path.read_bytes()
+            if resume_failure == "missing-candidate":
+                candidate_path.unlink()
+            if resume_failure == "missing-manifest":
+                (previous / "manifest.json").unlink()
+
+            def current_source(path):
+                if resume_failure == "missing-source" and path == openapi:
+                    raise FileNotFoundError("Missing source")
+                metadata, content = original_source(path)
+                if resume_failure == f"source-{source_paths.index(path)}":
+                    content = '{"changed": true}' if path == openapi else content + "\nChanged source\n"
+                    metadata.update(sha256=hashlib.sha256(content.encode()).hexdigest(), lines=len(content.splitlines()))
+                return metadata, content
+
             expected_workflow = candidate["workflow"] if expected_workflow is None else expected_workflow
             expected_checks = candidate["checks"] if expected_checks is None else expected_checks
             repair_patches = repair_patches or [{"summary": f"Repaired attempt {attempt}."} for attempt in range(2, dry_run_rejections + 2)]
@@ -97,6 +170,7 @@ class BuildAgentChecks(unittest.TestCase):
                 if command[:2] == ["git", "status"]:
                     return 0, "", ""
                 if command[0] == "codex":
+                    self.assertFalse(resume, "resume must never generate or repair")
                     self.assertNotIn("FREYA_API_KEY", kwargs["env"])
                     self.assertNotIn("FREYA_BANK_TEAM_KEY", kwargs["env"])
                     index = len(prompts)
@@ -106,6 +180,7 @@ class BuildAgentChecks(unittest.TestCase):
                     prompts.append(kwargs["input_text"])
                     return 0, '{"type":"turn.completed"}\n', ""
                 self.assertTrue(command[1].endswith("/scripts/test_agent.py"))
+                self.assertNotIn(resume_failure, ("lock", "readback", "version"))
                 self.assertEqual(kwargs["env"]["FREYA_BUILDER_LOCK_OWNER"], str(os.getpid()))
                 return 0, "Output: " + str(results) + "\n", ""
 
@@ -117,27 +192,73 @@ class BuildAgentChecks(unittest.TestCase):
             def api(method, path, **kwargs):
                 self.assertEqual(method, "GET")
                 if path == "/api/v2/workflow/mock-workflow":
-                    return {"workflow": {"workflow": saved}}
+                    return {"workflow": {"workflow": {**saved, "nodes": []} if resume_failure == "readback" else saved}}
                 self.assertEqual(path, "/api/v2/versions/workflow/mock-workflow")
-                return {"versions": [{"id": "mock-version", "versionNumber": 7, "isPublished": True}]}
+                return {"versions": [{"id": "mock-version", "versionNumber": 7, "isPublished": resume_failure != "version"}]}
 
             def export(workflow_id, path):
                 self.assertEqual(workflow_id, "mock-workflow")
                 Path(path).write_text(json.dumps({"workflow_id": workflow_id, "workflow": saved}))
 
-            local = {"ok": True, "valid": True, "errors": [], "checks": []}
+            local = {"ok": resume_failure != "invalid", "valid": resume_failure != "invalid",
+                     "errors": ["Invalid current workflow"] if resume_failure == "invalid" else [], "checks": []}
             error = "POST /api/v2/workflow -> 400: Missing workflow.tools.0.function.description"
             with patch.object(runner, "KIT", kit), patch.object(runner, "invoke", invoke), \
+                    patch.object(runner, "source", side_effect=current_source), \
                     patch("builder.validation.validate", side_effect=lambda *args, **kwargs: copy.deepcopy(local)) as local_validation, \
-                    patch("freya.validate_workflow", side_effect=[RuntimeError(error)] * dry_run_rejections + [{"ok": True}]) as dry_run, \
+                    patch("freya.validate_workflow", side_effect=([runner.BudgetExpired("Time budget ended")] if resume_failure == "budget"
+                                                                else [RuntimeError(error)] * dry_run_rejections + [{"ok": True}])) as dry_run, \
                     patch("freya.save_workflow", side_effect=save) as save_workflow, \
                     patch("freya.workspace_id", return_value="mock-workspace"), \
-                    patch("freya.api", side_effect=api), patch("freya.export_workflow", side_effect=export), \
+                    patch("freya.api", side_effect=api) as remote_read, patch("freya.export_workflow", side_effect=export) as remote_export, \
                     patch.dict(os.environ, {"FREYA_API_KEY": "fak_synthetic_not_live",
                                             "FREYA_BANK_TEAM_KEY": "synthetic_bank_team_key"}), \
                     patch("sys.argv", ["build_agent.py", str(brief), "--openapi", str(openapi),
-                                       "--budget-seconds", "60"]):
-                self.assertEqual(runner.main(), 0)
+                                       "--budget-seconds", "60", *(["--resume-build", str(previous)] if resume else [])]):
+                if resume_failure == "lock":
+                    with patch.object(runner.fcntl, "flock", side_effect=BlockingIOError):
+                        code = runner.main()
+                else:
+                    code = runner.main()
+                self.assertEqual(code, 2 if resume_failure else 0)
+                if resume:
+                    folder = next((kit / "out").iterdir())
+                    manifest = json.loads((folder / "manifest.json").read_text())
+                    trace = [json.loads(line) for line in (folder / "trace.jsonl").read_text().splitlines()]
+                    self.assertEqual(manifest["generation_attempts"], [])
+                    self.assertFalse(prompts)
+                    self.assertFalse(any(row["event"].startswith("model_") for row in trace))
+                    self.assertNotIn("builder_model", manifest)
+                    self.assertEqual(len(set(deadlines)), 1)
+                    if candidate_path.exists():
+                        self.assertEqual(candidate_path.read_bytes(), original_candidate)
+                    if resume_failure:
+                        self.assertEqual(manifest["status"], "incomplete_budget" if resume_failure == "budget" else "incomplete")
+                        self.assertIn("error", manifest)
+                        self.assertEqual(save_workflow.call_count, int(resume_failure in ("readback", "version")))
+                        remote_export.assert_not_called()
+                        if resume_failure not in ("dry-run", "readback", "version", "budget"):
+                            dry_run.assert_not_called()
+                            remote_read.assert_not_called()
+                        else:
+                            self.assertEqual(dry_run.call_count, 1)
+                        return manifest
+                    self.assertEqual(manifest["status"], "completed")
+                    self.assertEqual(manifest["resume_build"]["code_commit"], "original-generation-commit")
+                    self.assertEqual(manifest["resume_build"]["candidate_sha256"], hashlib.sha256(original_candidate).hexdigest())
+                    self.assertEqual(manifest["resume_build"]["generation_elapsed_seconds"], 1200)
+                    self.assertTrue(manifest["resume_build"]["reused_at"])
+                    self.assertTrue(manifest["resume_validation"]["valid"])
+                    self.assertTrue(manifest["live_test"]["tested_version_verified"])
+                    self.assertTrue(json.loads((folder / "readback.json").read_text())["ok"])
+                    self.assertEqual(local_validation.call_count, 1)
+                    self.assertEqual(dry_run.call_count, 1)
+                    self.assertEqual(save_workflow.call_count, 1)
+                    self.assertEqual(remote_export.call_count, 1)
+                    self.assertEqual(json.loads((folder / "candidate-attempt-1.json").read_text()), candidate)
+                    self.assertTrue((folder / "export.workflow.json").exists())
+                    self.assertIn("candidate_reused", [row["event"] for row in trace])
+                    return manifest
                 self.assertEqual(save_workflow.call_count, 1)
                 self.assertEqual(local_validation.call_count, dry_run_rejections + 1)
                 self.assertEqual(local_validation.call_args.args[0], expected_workflow)

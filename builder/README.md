@@ -56,6 +56,15 @@ is not stored. Generated artifacts are local and ignored by Git.
 `raw-attempt-N.json` preserves the model response, including sparse repairs;
 `candidate-attempt-N.json` preserves the assembled full candidate.
 
+To reuse the last saved complete candidate from a prior generation run, add
+`--resume-build build-the-builder/out/RUN_FOLDER` to the same build command.
+The ordered brief/API/prompt/platform source paths, SHA256 hashes and line counts
+must match its manifest, and the slot must be the same. Missing or changed inputs
+stop before platform access. The current validator and source provenance run again,
+then the same dry-run, publish, readback, export and test gates apply.
+Resume makes no model call or repair. Its new manifest and trace record the original
+run, generation commit, candidate hash and reuse time; `generation_attempts` is empty.
+
 The local validator checks stage boundaries, API fields, Python syntax, and
 executes generated guard examples with restricted Python. It also runs its own
 expected checks on shared state across offer, readback, approval and record.

@@ -73,6 +73,31 @@ def source(path):
             "lines": len(content.splitlines())}, content
 
 
+def resume_candidate(directory, sources, slot):
+    directory = directory.resolve()
+    previous = json.loads((directory / "manifest.json").read_text())
+    if previous.get("sources") != sources:
+        raise ValueError("Resume sources do not match the saved manifest in order, path, hash and line count.")
+    if previous.get("slot") != slot:
+        raise ValueError("Resume must use the saved workflow slot.")
+    commit = previous.get("code_commit")
+    if not isinstance(commit, str) or not commit.strip():
+        raise ValueError("Resume manifest has no generation code commit.")
+    attempts = previous.get("generation_attempts")
+    if not isinstance(attempts, list) or not attempts or not isinstance(attempts[-1], dict):
+        raise ValueError("Resume manifest has no recorded generation attempt.")
+    attempt = attempts[-1].get("attempt")
+    if type(attempt) is not int or attempt < 1:
+        raise ValueError("Resume manifest has an invalid generation attempt.")
+    path = directory / f"candidate-attempt-{attempt}.json"
+    raw = path.read_bytes()
+    return {"run_directory": str(directory), "code_commit": commit,
+            "candidate_path": str(path), "candidate_sha256": hashlib.sha256(raw).hexdigest(),
+            "generation_started_at": previous.get("started_at"),
+            "generation_elapsed_seconds": previous.get("elapsed_seconds"),
+            "reused_at": now()}, raw.decode("utf-8")
+
+
 def invoke(command, deadline, *, cwd=ROOT, env=None, input_text=None):
     remaining = deadline - time.monotonic()
     if remaining <= 0:
@@ -207,6 +232,7 @@ def main():
     parser.add_argument("--openapi", required=True, type=Path)
     parser.add_argument("--slot", help="Own stable Freya slot; default: kaan-<first brief stem>")
     parser.add_argument("--offline", action="store_true", help="Generate and validate without Freya access")
+    parser.add_argument("--resume-build", type=Path, help="Reuse the last complete saved candidate with identical sources; no generation or repair")
     parser.add_argument("--model", default="gpt-6.1-sol", help="Builder model; default: gpt-6.1-sol")
     parser.add_argument("--brief", choices=["A", "B"], default="A", help="Official scorer brief filter")
     parser.add_argument("--only", default="PUB-01", help="Comma-separated official case ids")
@@ -226,7 +252,7 @@ def main():
     folder.mkdir(parents=True)
     manifest = {"started_at": now(), "status": "running", "budget_seconds": args.budget_seconds,
                 "slot": slot, "offline": args.offline,
-                "live_test": {"status": "not_run"}, "artifacts": str(folder)}
+                "live_test": {"status": "not_run"}, "generation_attempts": [], "artifacts": str(folder)}
     trace = folder / "trace.jsonl"
 
     def event(kind, **details):
@@ -269,9 +295,10 @@ def main():
             if index <= len(args.briefs):
                 copy_name = f"brief-{index + 1:02d}-{path.name}" if index < len(args.briefs) else "openapi.json"
                 (inputs / copy_name).write_text(redact(content))
+            if index == len(args.briefs):
+                openapi = json.loads(content)
             numbered = "\n".join(f"{number}: {line}" for number, line in enumerate(content.splitlines(), 1))
             sections.append(f"\n=== SOURCE {metadata['path']} ({metadata['lines']} lines) ===\n{numbered}\n=== END SOURCE ===\n")
-        openapi = json.loads(args.openapi.read_text())
         manifest["sources"] = sources
         prompt = ("Build from the complete source files below. Briefs are in precedence order; later briefs amend earlier ones. "
                   "Use only these supplied inputs. Do not use tools or read local files. "
@@ -288,28 +315,33 @@ def main():
         command.append("-")
         from builder.validation import validate
         model_prompt, all_events, candidate = prompt, [], None
-        manifest["generation_attempts"] = []
-        for attempt in (1, 2, 3):
+        if args.resume_build:
+            reuse, raw_text = resume_candidate(args.resume_build, sources, slot)
+            manifest["resume_build"] = reuse
+            event("candidate_reused", **reuse)
+            print("Revalidating the saved candidate; no model generation or repair.", flush=True)
+        for attempt in ((1,) if args.resume_build else (1, 2, 3)):
             output_format = "merge_patch" if candidate is not None else "full_candidate"
-            purpose = ("Extract sourced policy and generate the portable workflow and local checks." if attempt == 1
-                       else "Repair the generated candidate using validation errors and the same complete source inputs.")
-            event("model_begin", attempt=attempt, model=args.model or "Codex CLI default", purpose=purpose, output_format=output_format)
-            print("Generating policy and workflow with Codex." if attempt == 1 else "Repairing the candidate from validation errors.", flush=True)
-            try:
-                returncode, stdout, stderr = invoke(command, deadline, env=model_environment(), input_text=model_prompt)
-            except BudgetExpired as error:
-                _, rows, _ = model_metadata(getattr(error, "stdout", ""), getattr(error, "stderr", ""), args.model)
-                write_json(folder / "model-events.json", all_events + [{"attempt": attempt, **row} for row in rows])
-                raise
-            model, rows, errors = model_metadata(stdout, stderr, args.model)
-            manifest["builder_model"] = model
-            all_events += [{"attempt": attempt, **row} for row in rows]
-            write_json(folder / "model-events.json", all_events)
-            event("model_end", attempt=attempt, model=model, purpose=purpose, output_format=output_format, exit_code=returncode)
-            if returncode:
-                raise RuntimeError("Codex generation failed: " + ("; ".join(errors) or redact(stderr)[-1200:]))
             raw_path = folder / "raw.json"
-            raw_text = raw_path.read_text()
+            if not args.resume_build:
+                purpose = ("Extract sourced policy and generate the portable workflow and local checks." if attempt == 1
+                           else "Repair the generated candidate using validation errors and the same complete source inputs.")
+                event("model_begin", attempt=attempt, model=args.model or "Codex CLI default", purpose=purpose, output_format=output_format)
+                print("Generating policy and workflow with Codex." if attempt == 1 else "Repairing the candidate from validation errors.", flush=True)
+                try:
+                    returncode, stdout, stderr = invoke(command, deadline, env=model_environment(), input_text=model_prompt)
+                except BudgetExpired as error:
+                    _, rows, _ = model_metadata(getattr(error, "stdout", ""), getattr(error, "stderr", ""), args.model)
+                    write_json(folder / "model-events.json", all_events + [{"attempt": attempt, **row} for row in rows])
+                    raise
+                model, rows, errors = model_metadata(stdout, stderr, args.model)
+                manifest["builder_model"] = model
+                all_events += [{"attempt": attempt, **row} for row in rows]
+                write_json(folder / "model-events.json", all_events)
+                event("model_end", attempt=attempt, model=model, purpose=purpose, output_format=output_format, exit_code=returncode)
+                if returncode:
+                    raise RuntimeError("Codex generation failed: " + ("; ".join(errors) or redact(stderr)[-1200:]))
+                raw_text = raw_path.read_text()
             raw_path.write_text(redact(raw_text))
             (folder / f"raw-attempt-{attempt}.json").write_text(redact(raw_text))
             try:
@@ -369,10 +401,13 @@ def main():
                 write_json(folder / "validation.json", report)
                 write_json(folder / f"validation-attempt-{attempt}.json", report)
                 event("freya_validation", attempt=attempt, valid=not dry_run_failed)
-            manifest["generation_attempts"].append({"attempt": attempt, "model": model, "valid": valid,
-                                                     "output_format": output_format,
-                                                     "errors": report.get("errors", [])})
-            if valid:
+            if args.resume_build:
+                manifest["resume_validation"] = {"valid": valid, "errors": report.get("errors", [])}
+            else:
+                manifest["generation_attempts"].append({"attempt": attempt, "model": model, "valid": valid,
+                                                         "output_format": output_format,
+                                                         "errors": report.get("errors", [])})
+            if valid or args.resume_build:
                 break
             repair_instruction = (
                 "For this repair, override earlier full-output instructions: return ONLY a JSON merge patch (RFC 7396) "
@@ -386,7 +421,7 @@ def main():
                             + "\n" + repair_instruction + " "
                             "Use only the original inputs for business facts. Do not weaken checks or skip source rules.\n")
         if not valid:
-            raise ValueError("Generated workflow failed validation; see validation.json.")
+            raise ValueError("Candidate failed validation; see validation.json.")
         if args.offline:
             manifest["status"] = "completed_local"
             exit_code = 0
