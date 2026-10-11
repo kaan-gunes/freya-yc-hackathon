@@ -4,6 +4,7 @@
 .env.*
 !.env.example
 .venv/
+**/.wrangler/
 __pycache__/
 *.py[cod]
 build-the-builder/.freya-agents.json

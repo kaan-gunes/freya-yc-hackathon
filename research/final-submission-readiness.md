@@ -2,6 +2,8 @@
 
 Resmî canlı sayfa incelendi. **38 dakika, teslimin kapanmasına değil final belgelerinin açılmasına yakın süreydi.** İnceleme sırasında saat 19:25 İstanbul'du. Bu rapor teslim veya deploy yapıldığı anlamına gelmez.
 
+**20:45 güncellemesi:** Güncel Drive BRIEF'i, README ve diğer 16 kaynak dosya okundu. Downloads'taki ilk brief yerine güncel dondurulmuş Drive kopyası kullanılır. Teslim alıcısı **yavuz@freyavoice.ai**; üç ek: submission.json, resmî workflow export'u ve builder'ın gerçek agent session logu. Gönderimden önce kullanıcıya durum anlatılıp onay sorulacak. Genel giriş hattı ve mock tamam: Worker yayımlı, 617/617 gerçek HTTP fixture karşılaştırması geçti. Yeni inbound hizmet profilinin bağımsız güvenlik kontrolleri sürüyor; final agent henüz üretilmedi. Aşağıdaki eksik tablosu **19:25 tarihsel incelemesidir**. İlk saat yeni belgeleri 21:00'den sonra ayrıca kontrol edilecek. [Güncel final çalışma kaydı](final-entry-result.md).
+
 ## Kesin takvim ve teslim
 
 | Aşama | 11 Ekim Pazar, İstanbul | UTC |
@@ -19,7 +21,7 @@ Gerekli çıktılar:
 - `submission.json`: `team`, `members` (her üye için ad/e-posta; toplam bir veya iki kişi), `repo`, `commit`, `run_command`, `workflow`, `trace`, `mock_url`.
 - `submission.json`, **kit e-postasında belirtilen adrese 23:00 İstanbul'dan önce gönderilmeli**. Sayfada teslim formu veya alıcı adresi yok. Verilen komut ve dosya yolları örnek; ekip kendi yollarını kullanabilir. [Resmî teslim adımları ve alanlar](https://www.freyavoice.ai/hackathon#submit)
 
-Trace başlangıç/bitiş zamanını, her model çağrısının modelini ve kısa amacını, workflow/agent ID'lerini, adım/tool sayılarını ve yapılan testlerin sonuçlarını göstermeli. API anahtarları temizlenmeli. Kodlama agentı sohbet logları isteğe bağlı; video şartı belirtilmiyor. Birden fazla builder koşusu yapılabilir, seçilen tek koşunun agentı ve trace'i teslim edilir. Kapanış sonrası güncelleme hakkı açıklanmıyor. [Trace ve sınırlar](https://www.freyavoice.ai/hackathon#submit)
+Trace başlangıç/bitiş zamanını, her model çağrısının modelini ve kısa amacını, workflow/agent ID'lerini, adım/tool sayılarını ve yapılan testlerin sonuçlarını göstermeli. API anahtarları temizlenmeli. **Final e-postası, builder Claude Code/Codex kullanırsa o üretimin gerçek agent session logunu özellikle istiyor**; runner bu olayları trace.jsonl içinde saklıyor. Video şartı belirtilmiyor. Birden fazla builder koşusu yapılabilir, seçilen tek koşunun agentı ve trace'i teslim edilir. Kapanış sonrası güncelleme hakkı açıklanmıyor. [Trace ve sınırlar](https://www.freyavoice.ai/hackathon#submit)
 
 **Canlı resmî sayfa, kit v3 README'nin eski final varsayımlarından günceldir.** Kit iki brief ve değişmeyen yedi tool adı anlatıyor; canlı sayfa tek Türkçe vaka ve ekibin Workers mock'unu istiyor. Final API şemasını kitin eski final açıklamasından kesin varsaymamalıyız.
 
@@ -31,7 +33,7 @@ Trace başlangıç/bitiş zamanını, her model çağrısının modelini ve kıs
 
 Bunları yeniden yazmaya gerek yok. Final koşusunun seçilen temiz çıktıları tracked bir `submission/` klasörüne alınabilir; raw çağrı kayıtları veya yerel anahtarlar pakete topluca eklenmemeli.
 
-## Doğrulanan eksikler
+## 19:25'te doğrulanan eksikler — tarihsel
 
 | Eksik | Yer ve etkisi |
 |---|---|
@@ -59,7 +61,7 @@ Genel bug düzeltmesi izinlidir. Resmî kural “You may fix a bug in your build
 
 ## Açık bilgiler ve sınır
 
-- Ekip bilgisi kullanıcıdan alındı: Core, Hamit Tuğrul Arslan ve Kaan Güneş. Üye e-postaları yerel teslim taslağına alındı. Alıcı adresi hâlâ kit e-postasından gerekiyor. Yerel taslak `build-the-builder/out/submission-prep/submission.draft.json`; final alanları henüz doldurulmadı ve gönderilmedi.
+- Ekip bilgisi kullanıcıdan alındı: Core, Hamit Tuğrul Arslan ve Kaan Güneş. Üye e-postaları yerel teslim taslağına alındı. **Final e-postası alıcıyı yavuz@freyavoice.ai olarak doğruladı.** Yerel taslak `build-the-builder/out/submission-prep/submission.draft.json`; final alanları henüz doldurulmadı ve gönderilmedi.
 - İnceleme anında final zip bağlantısı henüz açılmamıştı. Hizmet sözleşmesi, API alanları, örnek müşteriler ve içeriklerin yapısı henüz doğrulanmadı.
 - Kapanış sonrası resubmit/update hakkı ve GitHub repo erişim yöntemi sayfada açıklanmıyor.
 - Practice A skoru final skor tahmini değildir. Dosya/dil/API adaptasyonu ve erişilebilir mock tamamlanmadan final hazırlığı bitmiş sayılmaz.

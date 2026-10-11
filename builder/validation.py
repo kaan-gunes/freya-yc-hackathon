@@ -420,24 +420,25 @@ def _identity_requirements(policy, brief_lines):
                     raise ValueError("identity replacement has an ambiguous source rule reference")
                 superseded.add(old)
     patterns = {
-        "date": r"\b(?:date of birth|birth date|birthdate|dob)\b",
-        "numeric_code": r"\b(?:last (?:\w+|[0-9]+) digits|numeric (?:code|answer)|(?:[0-9]+|four|six)[ -]digit (?:code|pin)|pin code)\b",
+        "date": r"\b(?:date of birth|birth date|birthdate|dob|(?:doğum|dogum) tarih(?:i|ini|iniz|inizi))\b",
+        "numeric_code": r"\b(?:last (?:\w+|[0-9]+) digits|numeric (?:code|answer)|(?:[0-9]+|four|six)[ -]digit (?:code|pin)|pin code|son (?:[0-9]+|iki|üç|uc|dört|dort|altı|alti) (?:hane(?:si|sini)?|rakam(?:ı|i|ları|lari|larını|larini)?)|(?:sayısal|sayisal) kod|pin kodu)\b",
     }
     required = set()
     counts = {}
-    # shortcut: count explicit English "ask N security questions", extend only for a new supplied brief format.
-    count_pattern = r"\bask\s+(one|two|three|four|[0-9]+)\s+security questions?\b"
-    numbers = {"one": 1, "two": 2, "three": 3, "four": 4}
+    # shortcut: explicit English/Turkish question counts; prose-only counts need a sourced format.
+    count_pattern = r"\b(?:ask\s+)?(one|two|three|four|bir|iki|üç|uc|dört|dort|[0-9]+)\s+(?:adet\s+)?(?:security questions?|güvenlik sorusu|guvenlik sorusu|güvenlik soruları|guvenlik sorulari)\b"
+    numbers = {"one": 1, "two": 2, "three": 3, "four": 4, "bir": 1, "iki": 2, "üç": 3, "uc": 3, "dört": 4, "dort": 4}
     for name, text in sources.items():
         if name in superseded:
             continue
         if rules[name].get("stage") != "identity" and not re.search(count_pattern, text, re.I):
             continue
         required_text = re.sub(r"\b(?:never|do not|don't)\s+ask[^.!?]*(?:[.!?]|$)", "", text, flags=re.I)
+        required_text = re.sub(r"[^.!?]*\b(?:sorma|sormayın|sormayin|sorulmaz|sorulmamalıdır|sorulmamalidir)\b[^.!?]*(?:[.!?]|$)", "", required_text, flags=re.I)
         required.update(kind for kind, pattern in patterns.items() if re.search(pattern, required_text, re.I))
         count = re.search(count_pattern, text, re.I)
         if count:
-            word = count[1].lower()
+            word = count[1].lower().replace("\u0307", "")
             counts[name] = numbers.get(word, int(word) if word.isdigit() else 0)
     if brief_lines is not None:
         for lines in brief_lines.values():
@@ -472,6 +473,10 @@ def _independent_checks(nodes, snippets, security, checks, policy=None, openapi=
     trusted = set(security.get("trusted_variables", []))
     contract_errors = []
     source_texts = [line for lines in brief_lines.values() for line in lines] if brief_lines is not None else [rule.get("text", "") for rule in (policy or {}).get("source_rules", [])]
+    def has_ai_answer(text):
+        answer = (policy or {}).get("speech", {}).get("ai_answer")
+        return (answer.lower() in text.lower() if isinstance(answer, str) and answer.strip()
+                else "digital assistant" in text.lower())
     if any(re.search(r"\bif it fails\s*,\s*try once more\b", text, re.I) for text in source_texts) and security.get("write_attempt_limit") != 2:
         contract_errors.append("write_attempt_limit must preserve the source-required second attempt")
     promise_fields = security.get("promise_request_fields", {})
@@ -1452,7 +1457,7 @@ def _independent_checks(nodes, snippets, security, checks, policy=None, openapi=
             numbers = [float(number.replace(",", "")) for number in re.findall(r'\b[0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?\b', text)]
             if not missing and (value not in numbers or "?" in text):
                 raise ValueError("minimum question must answer the bank amount without another offer")
-            if missing and (numbers or re.search(r'\b(minimum|digital assistant|scam)\b', text, re.I)):
+            if missing and (numbers or re.search(r'\b(minimum|digital assistant|scam|asgari|dijital asistan|dolandırıcılık)\b', text, re.I)):
                 raise ValueError("missing question text invented or reused question content")
             for field in (*fields.values(), roles["persuasion_attempts"]):
                 if state.get(field) != base.get(field):
@@ -1460,7 +1465,7 @@ def _independent_checks(nodes, snippets, security, checks, policy=None, openapi=
             # The same state with no current question cannot replay the consumed text.
             later, later_target = advance(decision, current(state, events["question"]),
                                            (offer, *readbacks, *record_nodes, *security["account_nodes"]))
-            if re.search(r'\bminimum\b', spoken(later_target, later), re.I):
+            if re.search(r'\b(?:minimum|asgari)\b', spoken(later_target, later), re.I):
                 raise ValueError("consumed minimum question was reused")
 
         for label, event in (("question", events["question"]), ("empty", ""), ("wrong", events["no"])):
@@ -1530,7 +1535,7 @@ def _independent_checks(nodes, snippets, security, checks, policy=None, openapi=
             assert_denied(state)
             if target not in readbacks or not state.get(roles["offer_fingerprint"]) or state.get(roles["readback_fingerprint"]) != state[roles["offer_fingerprint"]]:
                 raise ValueError("mixed AI offer did not reach a current matching readback")
-            if "digital assistant" not in spoken(target, state).lower():
+            if not has_ai_answer(spoken(target, state)):
                 raise ValueError("AI answer disappeared while keeping the current offer")
             record_amount(state, full_amount, proposal_day.isoformat())
         for label, event in (("offer", events["yes"]), ("question", events["question"]), ("empty", "")):
@@ -1567,7 +1572,7 @@ def _independent_checks(nodes, snippets, security, checks, policy=None, openapi=
             def interrupted_confirmation(change=None):
                 state, target = advance(approval, raw_approval(valid_readback(), events["question"], "Am I talking to a robot?"), (*record_nodes,))
                 assert_denied(state)
-                if "digital assistant" not in spoken(target, state).lower():
+                if not has_ai_answer(spoken(target, state)):
                     raise ValueError("confirmation question lost the sourced AI answer")
                 amount = str(conversation["minimum_fixture"][fields["minimum_amount"]]) if change == "amount" else ""
                 day = (proposal_day + datetime.timedelta(days=1)).isoformat() if change == "date" else ""
@@ -1598,7 +1603,7 @@ def _independent_checks(nodes, snippets, security, checks, policy=None, openapi=
                 text = f"I can pay {amount + ' dollars ' if amount else ''}on {day}. Am I talking to a robot?"
                 state, target = advance(decision, current(fixture, "offer", text, day, amount), (*record_nodes,))
                 assert_denied(state)
-                if "digital assistant" not in spoken(target, state).lower():
+                if not has_ai_answer(spoken(target, state)):
                     raise ValueError("current AI answer disappeared on the final offer or clarification path")
 
             for kind in ("current", "vague", "invalid"):
@@ -1615,6 +1620,37 @@ def _independent_checks(nodes, snippets, security, checks, policy=None, openapi=
                     raise ValueError("clear current consent changed the readback promise")
             run("independent_raw_confirmation_longer_current_yes", longer_current_confirmation)
 
+            def turkish_confirmation(text, accepted):
+                state = valid_readback()
+                amount, day = state[roles["proposed_amount"]], state[roles["proposed_date"]]
+                state, target = advance(approval, raw_approval(state, events["yes"], text), () if accepted else (*record_nodes,))
+                if not accepted:
+                    assert_denied(state)
+                    return
+                if target not in record_nodes or state.get(authorization) != authorized:
+                    raise ValueError("clear current Turkish consent did not authorize the readback promise")
+                if not any(name == "create_promise" and _json_equal(body.get(promise_fields["amount"]), amount)
+                           and body.get(promise_fields["date"]) == day for name, body in bound_request(target, state)):
+                    raise ValueError("Turkish consent changed the current readback promise")
+            for label, text, accepted in (("yes", "Evet, onaylıyorum. Teşekkürler.", True),
+                                          ("no", "Hayır, onaylamıyorum.", False),
+                                          ("conditional", "Evet, maaşım yatarsa.", False),
+                                          ("past", "Daha önce evet dedim.", False),
+                                          ("question", "Evet, ama tarihi değiştirebilir miyiz?", False)):
+                run("independent_raw_turkish_confirmation_" + label,
+                    lambda text=text, accepted=accepted: turkish_confirmation(text, accepted))
+
+            def turkish_payment_date(current_input):
+                month = ("Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık")[proposal_day.month - 1]
+                raw = f"{proposal_day.day} {month} {proposal_day.year}"
+                state = full_amount_state(events["yes"], str(full_amount)) if current_input else copy.deepcopy(fixture)
+                state[roles["decision_date"] if current_input else roles["proposed_date"]] = raw
+                expected = full_amount if current_input else float(fixture[roles["proposed_amount"]])
+                record_amount(valid_readback(state, decision if current_input else offer), expected, proposal_day.isoformat())
+            for label, current_input in (("current", True), ("shared", False)):
+                run("independent_turkish_payment_date_" + label,
+                    lambda current_input=current_input: turkish_payment_date(current_input))
+
             def non_agent_robot_question():
                 base = conversation["minimum_fixture"]
                 state, target = advance(decision, current(base, events["question"], "What is the minimum payment for my robot vacuum purchase?"),
@@ -1622,7 +1658,7 @@ def _independent_checks(nodes, snippets, security, checks, policy=None, openapi=
                 assert_denied(state)
                 text = spoken(target, state)
                 numbers = [float(number.replace(",", "")) for number in re.findall(r'\b[0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?\b', text)]
-                if float(base[fields["minimum_amount"]]) not in numbers or "digital assistant" in text.lower():
+                if float(base[fields["minimum_amount"]]) not in numbers or has_ai_answer(text):
                     raise ValueError("non-agent robot question replaced the sourced minimum answer with an AI disclosure")
             run("independent_raw_non_agent_robot_minimum", non_agent_robot_question)
 
@@ -1669,8 +1705,572 @@ def _independent_checks(nodes, snippets, security, checks, policy=None, openapi=
     return reports
 
 
+def _service_types(schema, document):
+    schema = _resolve(schema, document)
+    types = {schema['type']} if isinstance(schema.get('type'), str) else set()
+    for key in ('anyOf', 'oneOf'):
+        for choice in schema.get(key, []):
+            types.update(_service_types(choice, document))
+    return types
+
+
+def _service_body(properties, state):
+    import json
+    def value(spec):
+        if 'default' in spec:
+            raw = spec['default']
+            match = PLACEHOLDER.fullmatch(raw) if isinstance(raw, str) else None
+            if match:
+                if match.group(1) not in state:
+                    raise ValueError('unresolved API variable ' + match.group(1))
+                raw = state[match.group(1)]
+                if spec.get('type') in ('object', 'array') and isinstance(raw, str):
+                    raw = json.loads(raw)
+            return copy.deepcopy(raw)
+        if spec.get('type') == 'object' and isinstance(spec.get('properties'), dict):
+            return {name: value(child) for name, child in spec['properties'].items()}
+        raise ValueError('API request field has no baked value')
+    return {name: value(spec) for name, spec in properties.items()}
+
+
+def _service_path(value, path):
+    for part in path.split('.'):
+        if not isinstance(value, dict) or part not in value:
+            return None
+        value = value[part]
+    return value
+
+
+def _validate_service(workflow, policy, openapi, checks, brief_lines):
+    """Validate input-derived service actions without inventing collections roles."""
+    errors, reports, snippets, incoming, api_nodes = [], [], {}, {}, {}
+    def fail(message):
+        errors.append(message)
+    security = policy.get('security', {})
+    nodes = workflow.get('nodes', {})
+    if not isinstance(security, dict) or not isinstance(nodes, dict) or not nodes:
+        raise ValueError('Service needs security metadata and a nonempty nodes object')
+    if workflow.get('global_nodes') or workflow.get('tools') or workflow.get('test_variables'):
+        fail('Service globals, lifecycle tools and test_variables must be empty; use fresh guarded engine actions')
+    errors.extend('null value: ' + path for path in _null_paths(workflow))
+    context, trusted = security.get('context_variables', []), security.get('trusted_variables', [])
+    if (not isinstance(context, list) or not context or not isinstance(trusted, list) or not trusted
+            or any(not isinstance(field, str) or not field for field in [*context, *trusted])):
+        raise ValueError('Service context_variables and trusted_variables need literal nonempty names')
+    context, trusted = set(context), set(trusted)
+    customer_field, customer_variable = security.get('customer_id_field'), security.get('customer_id_variable')
+    if not isinstance(customer_field, str) or not customer_field or customer_variable not in context:
+        fail('Service customer identifier must bind a supplied trusted call input')
+    effects = policy.get('service_operations', {})
+    gates, results = security.get('action_guards', {}), security.get('api_results', {})
+    context_bindings = security.get('context_bindings', {customer_field: customer_variable})
+    if not isinstance(context_bindings, dict) or any(not isinstance(path, str) or not path or variable not in context for path, variable in context_bindings.items()):
+        fail('Service context_bindings must map sourced request paths to trusted call input variables')
+    rules = {rule.get('id') for rule in policy.get('source_rules', []) if isinstance(rule, dict)}
+    if not rules or policy.get('unsupported') != []:
+        fail('Service needs source rule evidence and no unsupported requirements')
+    if not all(isinstance(value, dict) for value in (effects, gates, results)):
+        raise ValueError('Service operations, action guards and API results must be objects')
+    base = openapi['servers'][0]['url'].rstrip('/')
+    operations = {}
+    for path, item in openapi['paths'].items():
+        for method, raw in _resolve(item, openapi).items():
+            if method.lower() not in ('get', 'post', 'put', 'patch', 'delete'):
+                continue
+            operation = _resolve(raw, openapi)
+            name = operation.get('operationId', path.strip('/').replace('/', '_'))
+            request = _resolve(operation.get('requestBody', {}), openapi)
+            schema = _resolve(request.get('content', {}).get('application/json', {}).get('schema', {'type': 'object', 'properties': {}}), openapi)
+            operations[name] = (base + path, method.upper(), schema, operation)
+    if not operations:
+        fail('Service OpenAPI contains no supported operations')
+    for name, effect in effects.items():
+        if name not in operations or not isinstance(effect, dict) or effect.get('effect') not in ('read', 'write', 'transfer') or effect.get('source_rule') not in rules:
+            fail('Service operation needs a sourced effect: ' + name)
+    extracted = set()
+    for name, node in nodes.items():
+        incoming[name] = []
+        if not isinstance(node, dict) or node.get('name') != name or node.get('node_type') not in ('conversation', 'code', 'api_request', 'end_call'):
+            fail(name + ': invalid service node')
+            continue
+        kind = node['node_type']
+        transitions = node.get('transitions', [])
+        if not isinstance(transitions, list):
+            raise ValueError(name + ': transitions must be a list')
+        if kind in ('code', 'api_request') and (not node.get('passthrough') or not transitions or transitions[-1].get('condition') != {'operator': 'always'}):
+            fail(name + ': engine node needs passthrough and final always fallback')
+        if kind == 'conversation':
+            if node.get('pre_actions') or node.get('tools') or node.get('passthrough') or len(transitions) != 1 or transitions[0].get('condition') != {'operator': 'always'} or nodes.get(transitions[0].get('target_node'), {}).get('node_type') != 'code':
+                fail(name + ': listener must have one always transition to code and no tools')
+            if node.get('on_enter', {}).get('type') != 'tts' or not node.get('on_enter', {}).get('text'):
+                fail(name + ': listener needs fixed TTS')
+        for field in node.get('extraction_schema', []):
+            variable = field.get('name')
+            extracted.add(variable)
+            if (not isinstance(variable, str) or not variable or variable in context | trusted
+                    or field.get('type') != 'string' or field.get('min_confidence') != 0 or field.get('max_retries') != 1
+                    or field.get('validation_pattern') or field.get('format') or 'enum' in field and '' not in field['enum']):
+                fail(name + ': extraction must be untrusted, blankable and optional')
+        if node.get('tools'):
+            fail(name + ': model-visible tools are unavailable')
+        actions = node.get('pre_actions', [])
+        if kind in ('code', 'api_request') and len(actions) != 1:
+            fail(name + ': engine node needs exactly one action')
+        for tool in actions:
+            function = tool.get('function', {})
+            handler, operation = function.get('handler'), function.get('name')
+            properties = function.get('parameters', {}).get('properties', {})
+            if not isinstance(function.get('description'), str) or not function['description'].strip():
+                fail(name + ': action needs description')
+            if handler == '__function__:code_exec' and kind == 'code':
+                snippets[name] = (properties.get('code', {}).get('default'), None, None)
+            elif handler == '__function__:api_call' and kind == 'api_request':
+                if operation not in operations or operation not in effects:
+                    fail(name + ': API action needs a real OpenAPI operation and sourced effect')
+                    continue
+                url, method, schema, _ = operations[operation]
+                if properties.get('url', {}).get('default') != url or properties.get('method', {}).get('default') != method:
+                    fail(name + ': wrong API URL or method')
+                if tool.get('pre_process_code'):
+                    fail(name + ': API request must already be validated before entry')
+                if tool.get('config', {}).get('maxRetries') != 0 or properties.get('connect_retries', {}).get('default') != 0:
+                    fail(name + ': service actions need zero automatic retries')
+                body = properties.get('body', {})
+                fields = body.get('properties', {})
+                def request_fields(schema, provided, required, prefix=''):
+                    schema = _resolve(schema, openapi)
+                    for field in schema.get('required', []):
+                        if field not in provided or field not in required:
+                            fail(name + ': missing required request field ' + prefix + field)
+                    for field, spec in provided.items():
+                        expected = _resolve(schema.get('properties', {}).get(field, {}), openapi)
+                        value = spec.get('default')
+                        match = PLACEHOLDER.fullmatch(value) if isinstance(value, str) else None
+                        if not expected or spec.get('type') not in _service_types(expected, openapi) or 'const' in spec:
+                            fail(name + ': unsupported request field ' + prefix + field)
+                        if spec.get('type') == 'object' and 'default' not in spec and isinstance(spec.get('properties'), dict):
+                            request_fields(expected, spec['properties'], spec.get('required', []), prefix + field + '.')
+                        elif 'default' not in spec:
+                            fail(name + ': unbound request field ' + prefix + field)
+                        if 'enum' in expected and (set(spec.get('enum', [])) != set(expected['enum']) or not match and value not in expected['enum']):
+                            fail(name + ': invalid request enum ' + prefix + field)
+                        if match and match.group(1) not in context | trusted:
+                            fail(name + ': API body may not bind raw speech or unknown variables')
+                        path = prefix + field
+                        if path in context_bindings and value != '{{' + str(context_bindings[path]) + '}}':
+                            fail(name + ': call context must be bound unchanged at ' + path)
+                        if expected.get('format') and spec.get('format') != expected['format']:
+                            fail(name + ': wrong request format ' + path)
+                request_fields(schema, fields, body.get('required', []))
+                api_nodes[name] = operation
+                if tool.get('post_process_code'):
+                    snippets[name + ':' + operation + ':post'] = (tool['post_process_code'], operation, 'post')
+                for mapping in tool.get('response_mapping', []) + node.get('response_mapping', []):
+                    if (not mapping.get('path', '').startswith('data.') or mapping.get('variable') not in trusted or mapping.get('variable') in context
+                            or mapping.get('variable') in {gate.get('variable') for gate in gates.values() if isinstance(gate, dict)}
+                            or mapping.get('variable') in {result.get('success_variable') for result in results.values() if isinstance(result, dict)}):
+                        fail(name + ': response mappings may write sourced bank state only')
+            else:
+                fail(name + ': unsupported engine action')
+        if kind == 'end_call':
+            function = node.get('terminal', {}).get('function', {})
+            parameters = function.get('parameters', {}).get('properties', {})
+            if transitions or actions or function.get('handler') != '__function__:end_call' or parameters.get('message_mode', {}).get('default') != 'custom' or not parameters.get('spoken_message', {}).get('default'):
+                fail(name + ': terminal needs a fixed end_call farewell')
+    for source, node in nodes.items():
+        targets = [(item.get('target_node'), item.get('condition')) for item in node.get('transitions', [])]
+        targets += [(node[key], {'operator': 'always'}) for key in ('passthrough_default_transition', 'max_turn_transition') if node.get(key)]
+        for target, condition in targets:
+            if target not in nodes:
+                fail(source + ': unknown route ' + str(target))
+            else:
+                incoming[target].append((source, condition))
+    initial = workflow.get('initial_node')
+    if nodes.get(initial, {}).get('node_type') != 'conversation' or '{{' in nodes.get(initial, {}).get('on_enter', {}).get('text', ''):
+        fail('Service must start with a literal conversation opening')
+    edges = {name: {target for target, _ in [(item.get('target_node'), item.get('condition')) for item in node.get('transitions', [])]} for name, node in nodes.items()}
+    unreachable = set(nodes) - _reachable(edges, [initial])
+    if unreachable:
+        fail('Service nodes unreachable from opening: ' + ', '.join(sorted(unreachable)))
+    authorizations = {gate.get('variable'): gate for gate in gates.values() if isinstance(gate, dict)}
+    response_prefixes = {name + '_response': result for name, result in results.items() if isinstance(result, dict)}
+    if any(field == prefix or field.startswith(prefix + '.') for field in context | trusted | extracted for prefix in response_prefixes):
+        fail('Service engine response namespaces may not be model, bank-mapping or call-context variables')
+    for identifier, (code, operation, hook) in snippets.items():
+        try:
+            tree = _parse(code)
+            writes = _writes(tree)
+            if writes & context:
+                fail(identifier + ': code may not overwrite trusted call context')
+            lines = code.splitlines()
+            owned_lines = set()
+            owned_sections = set()
+            for name, gate in gates.items():
+                if gate.get('node') == identifier:
+                    owned_sections.update({'SERVICE INPUT ' + name, 'SERVICE OUTPUT ' + name})
+            for name, result in results.items():
+                if result.get('entry_node') == identifier:
+                    owned_sections.add('SERVICE RESET ' + name)
+                if result.get('result_node') == identifier:
+                    owned_sections.update({'SERVICE RESULT INPUT ' + name, 'SERVICE RESULT OUTPUT ' + name})
+            language_fields = security.get('language_input', {})
+            if isinstance(language_fields, dict) and any(identifier in language_fields.get(key, {}) for key in ('date_fields', 'amount_fields')):
+                owned_sections.add('SERVICE LANGUAGE INPUT')
+            inside = None
+            for number, line in enumerate(lines, 1):
+                if line.startswith('# BEGIN KAAN '):
+                    section = line[len('# BEGIN KAAN '):]
+                    if section not in owned_sections or inside:
+                        fail(identifier + ': unexpected compiler-owned code section')
+                    inside = section if section in owned_sections else None
+                if inside:
+                    owned_lines.add(number)
+                if line.startswith('# END KAAN '):
+                    if line[len('# END KAAN '):] != inside:
+                        fail(identifier + ': invalid compiler-owned code section')
+                    inside = None
+            if inside:
+                fail(identifier + ': unclosed compiler-owned code section')
+            for assignment in ast.walk(tree):
+                reserved = (assignment.id if isinstance(assignment, ast.Name) else assignment.name if isinstance(assignment, (ast.FunctionDef, ast.AsyncFunctionDef))
+                            else assignment.arg if isinstance(assignment, ast.arg) else assignment.asname if isinstance(assignment, ast.alias) else None)
+                if isinstance(reserved, str) and reserved.startswith('_service_') and assignment.lineno not in owned_lines:
+                    fail(identifier + ': generated code may not access compiler-owned result snapshots or reserved helper names')
+            for variable in writes:
+                for prefix, result in response_prefixes.items():
+                    if variable == prefix or variable.startswith(prefix + '.'):
+                        for value in _authorization_values(tree, variable):
+                            if (identifier != result.get('entry_node') or not isinstance(value, ast.Constant)
+                                    or value.value != '' or value.lineno not in owned_lines):
+                                fail(identifier + ': engine response evidence is read-only outside its source-owned reset')
+            for variable, gate in authorizations.items():
+                if identifier != gate.get('node'):
+                    for value in _authorization_values(tree, variable):
+                        if not isinstance(value, ast.Constant) or value.value == gate.get('operand'):
+                            fail(identifier + ': only its source guard may authorize an action')
+            for result in results.values():
+                if identifier != result.get('result_node'):
+                    for value in _authorization_values(tree, result.get('success_variable')):
+                        if not isinstance(value, ast.Constant) or value.value == result.get('success_operand'):
+                            fail(identifier + ': only current result classifier may mark success')
+        except (ValueError, SyntaxError, TypeError) as exc:
+            fail(identifier + ': invalid Python: ' + str(exc))
+    for name, node in nodes.items():
+        if node.get('node_type') == 'code':
+            fallback = node.get('passthrough_default_transition')
+            target = nodes.get(fallback, {})
+            if (target.get('node_type') != 'conversation' or '{{' in target.get('on_enter', {}).get('text', '')
+                    or not target.get('on_enter', {}).get('text') or target.get('tools')):
+                fail(name + ': code timeout must reach a literal retry listener')
+    language = security.get('language_input', {})
+    if not isinstance(language, dict):
+        fail('Service language_input must be an object')
+    else:
+        date_fields, amount_fields = language.get('date_fields', {}), language.get('amount_fields', {})
+        if not isinstance(date_fields, dict) or not isinstance(amount_fields, dict):
+            fail('Service language fields must map real code nodes to raw speech fields')
+        else:
+            if date_fields and language.get('now_variable') not in context:
+                fail('Service date anchor must be an immutable supplied call-context variable')
+            for node, fields in [*date_fields.items(), *amount_fields.items()]:
+                if nodes.get(node, {}).get('node_type') != 'code' or not isinstance(fields, list) or any(field not in extracted for field in fields):
+                    fail('Service language normalization must bind real code nodes and actual raw speech fields')
+    for name, gate in gates.items():
+        if not isinstance(gate, dict) or effects.get(name, {}).get('effect') not in ('write', 'transfer'):
+            fail('Service action guard names a non-mutating operation: ' + name)
+            continue
+        node, target, variable, operand = (gate.get(key) for key in ('node', 'target', 'variable', 'operand'))
+        if node not in snippets or nodes.get(node, {}).get('node_type') != 'code' or api_nodes.get(target) != name or variable not in trusted or not isinstance(operand, str) or not operand or gate.get('source_rule') not in rules:
+            fail(name + ': action guard needs real code, action, trusted authorization and source evidence')
+        if effects[name]['effect'] == 'write' and gate.get('consent_required', True) is not True:
+            fail(name + ': a mutating service action requires current customer consent')
+        if gate.get('consent_required', True):
+            if any(gate.get(key) not in extracted for key in ('text_field', 'event_field')) or not isinstance(gate.get('fixture'), dict) or not isinstance(gate.get('valid_text'), str) or not gate['valid_text'].strip():
+                fail(name + ': current consent needs actual speech fields and a synthetic valid fixture')
+        entries = incoming.get(target, [])
+        if len(entries) != 1 or entries[0][0] != node or not _exact_guard(entries[0][1], variable, operand):
+            fail(name + ': action must have one exact authorization edge from its guard')
+        if gate.get('confirmation_required'):
+            readbacks = gate.get('confirmation_nodes', [])
+            if not readbacks or any(nodes.get(item, {}).get('node_type') != 'conversation' for item in readbacks) or node in _reachable(edges, [initial], readbacks):
+                fail(name + ': confirmation guard is reachable before a fresh readback')
+            if any(gate.get(key) not in trusted for key in ('fingerprint_variable', 'readback_fingerprint_variable')):
+                fail(name + ': confirmed request needs matching trusted payload and readback fingerprints')
+            if not isinstance(gate.get('consent_phrases', []), list) or any(not isinstance(phrase, str) or not phrase.strip() for phrase in gate.get('consent_phrases', [])):
+                fail(name + ': additional confirmation phrases must come from the sourced action vocabulary')
+        if not isinstance(gate.get('value_fields', []), list) or any(field not in extracted for field in gate.get('value_fields', [])):
+            fail(name + ': changed value fields must be actual fresh speech fields')
+    result_nodes = [result.get('result_node') for result in results.values() if isinstance(result, dict)]
+    if len(result_nodes) != len(set(result_nodes)):
+        fail('Service API actions need separate current-result code nodes; one classifier may not process multiple API responses')
+    for node, operation in api_nodes.items():
+        if effects[operation]['effect'] != 'read' and gates.get(operation, {}).get('target') != node:
+            fail(node + ': mutating action has no declared guard')
+        result = results.get(node, {})
+        if (not isinstance(result, dict) or result.get('entry_node') not in snippets or result.get('result_node') not in snippets
+                or nodes.get(result.get('entry_node'), {}).get('node_type') != 'code' or nodes.get(result.get('result_node'), {}).get('node_type') != 'code'
+                or result.get('entry_node') == result.get('result_node') or result.get('success_variable') not in trusted
+                or not isinstance(result.get('success_operand'), str) or not result.get('success_operand')
+                or result.get('route_variable') not in trusted or result.get('speech_variable') not in trusted
+                or not isinstance(result.get('failure_route'), str) or not isinstance(result.get('failure_text'), str) or not result['failure_text'].strip()
+                or not isinstance(result.get('fixture'), dict) or not isinstance(result.get('success_result'), dict)
+                or not isinstance(result.get('required_response_fields'), list) or not isinstance(result.get('success_statuses'), list) or not result['success_statuses']):
+            fail(node + ': API needs a failure-safe current-result classifier, source-shaped fixture and honest fallback')
+            continue
+        response_codes = operations[operation][3].get('responses', {})
+        if any(str(status) not in response_codes or not str(status).startswith('2') for status in result['success_statuses']):
+            fail(node + ': success HTTP status is absent from the supplied API')
+        if not incoming.get(node) or any(source != result['entry_node'] for source, _ in incoming[node]):
+            fail(node + ': API must enter through its response-reset code')
+        transitions = nodes[node].get('transitions', [])
+        if len(transitions) != 1 or transitions[0].get('target_node') != result['result_node'] or transitions[0].get('condition') != {'operator': 'always'}:
+            fail(node + ': every API success/error must reach its own result code')
+        business = result.get('business_success')
+        if business is not None and (not isinstance(business, dict) or not isinstance(business.get('path'), str) or not business['path'].startswith('data.') or 'operand' not in business):
+            fail(node + ': business success must use a sourced body property')
+        source_business = operations[operation][3].get('x-business-success')
+        if source_business:
+            expected_business = {'path': 'data.' + source_business['path'], 'operand': source_business['operand']}
+            if not _json_equal(business, expected_business):
+                fail(node + ': business success must preserve the supplied source-contract success condition')
+        def source_response_path(path, statuses):
+            if not isinstance(path, str) or not path.startswith('data.'):
+                return False
+            for status in statuses:
+                response = _resolve(response_codes.get(str(status), {}), openapi)
+                schema = response.get('content', {}).get('application/json', {}).get('schema', {})
+                for part in path[5:].split('.'):
+                    schema = _resolve(schema, openapi).get('properties', {}).get(part, {})
+                if not schema:
+                    return False
+            return True
+        if not result['required_response_fields'] and not business:
+            fail(node + ': success requires a sourced body flag or required response fields')
+        for path in result['required_response_fields']:
+            if not source_response_path(path, result['success_statuses']):
+                fail(node + ': required response field is absent from the successful API schema: ' + str(path))
+        if isinstance(business, dict) and not source_response_path(business.get('path'), result['success_statuses']):
+            fail(node + ': business success field is absent from the successful API schema')
+        if result.get('response_prefix', node + '_response') != node + '_response':
+            fail(node + ': API response prefix must use the real engine node identifier')
+        if result.get('entry_node') != gates.get(operation, {}).get('node') and effects[operation]['effect'] != 'read':
+            fail(node + ': mutating action response reset must be in its consent guard')
+        if not isinstance(result.get('error_outcomes', []), list):
+            fail(node + ': sourced error outcomes must be an array')
+        for error in result.get('error_outcomes', []):
+            if (not isinstance(error, dict) or str(error.get('status')) not in response_codes
+                    or not isinstance(error.get('path'), str) or not error['path'].startswith('data.')
+                    or 'operand' not in error or not isinstance(error.get('route'), str)
+                    or not isinstance(error.get('speech'), str) or not error['speech'].strip() or error.get('source_rule') not in rules):
+                fail(node + ': known error outcome needs source status, body code and honest sourced route/speech')
+            elif not source_response_path(error['path'], [error['status']]) or str(error['status']).startswith('2'):
+                fail(node + ': known error code is absent from the supplied error response schema')
+    if set(results) != set(api_nodes):
+        fail('Service api_results must cover exactly the actual API nodes')
+    if not isinstance(checks, list) or not checks:
+        fail('Service needs generated runnable control checks')
+        checks = []
+    for check in checks:
+        identifier = check.get('node_id') if isinstance(check, dict) else None
+        report = {'name': check.get('name', '') if isinstance(check, dict) else '', 'node_id': identifier, 'ok': False}
+        try:
+            if identifier not in snippets or not isinstance(check.get('vars'), dict) or not isinstance(check.get('expected'), dict) or not check['expected'] or not any(key in trusted for key in check['expected']):
+                raise ValueError('Service check must execute real code and assert a trusted control')
+            _run_check(snippets[identifier][0], check)
+            report['ok'] = True
+        except (ValueError, TypeError, KeyError, EOFError) as exc:
+            report['error'] = str(exc)
+            fail('check ' + report['name'] + ': ' + str(exc))
+        reports.append(report)
+    def probe(name, node, state, expected):
+        report = {'name': name, 'node_id': node, 'ok': False}
+        try:
+            output = _run_check(snippets[node][0], {'vars': state, 'expected': {}})['vars']
+            expected(output)
+            report['ok'] = True
+        except (ValueError, TypeError, KeyError, EOFError) as exc:
+            report['error'] = str(exc)
+            fail('check ' + name + ': ' + str(exc))
+        reports.append(report)
+    def require(condition, message):
+        if not condition:
+            raise ValueError(message)
+    def audible_result(identifier, state, expected):
+        current = identifier
+        for _ in range(len(nodes) + 1):
+            node = nodes[current]
+            if node.get('node_type') in ('conversation', 'end_call'):
+                speech = (node.get('on_enter', {}).get('text', '') if node['node_type'] == 'conversation' else
+                          node.get('terminal', {}).get('function', {}).get('parameters', {}).get('properties', {}).get('spoken_message', {}).get('default', ''))
+                speech = re.sub(r'\{\{([\w.]+)\}\}', lambda match: str(state.get(match.group(1), '')), speech)
+                require(expected in speech, 'failure graph did not speak the declared honest current-result outcome')
+                return
+            require(node.get('node_type') == 'code', 'failure graph reached another HTTP action before an honest outcome')
+            if current != identifier:
+                state = _run_check(snippets[current][0], {'vars': state, 'expected': {}})['vars']
+            targets = [item['target_node'] for item in node.get('transitions', []) if _condition(item.get('condition', {}), state)]
+            require(bool(targets), 'result graph has no matching route')
+            current = targets[0]
+        raise ValueError('failure graph loops before speaking its current outcome')
+    if not errors:
+        def check_request(node, state):
+            tool = nodes[node]['pre_actions'][0]
+            properties = tool['function']['parameters']['properties']['body']['properties']
+            body = _service_body(properties, state)
+            schema = operations[api_nodes[node]][2]
+            def shape(value, schema):
+                schema = _resolve(schema, openapi)
+                allowed = _service_types(schema, openapi)
+                actual = ('boolean' if isinstance(value, bool) else 'object' if isinstance(value, dict) else 'array' if isinstance(value, list)
+                          else 'string' if isinstance(value, str) else 'integer' if isinstance(value, int) else 'number' if isinstance(value, float) else 'null')
+                require(actual in allowed or actual == 'integer' and 'number' in allowed, 'resolved request value has wrong JSON type')
+                if isinstance(value, dict):
+                    require(all(field in value for field in schema.get('required', [])), 'resolved request omitted required fields')
+                    for key, item in value.items():
+                        require(key in schema.get('properties', {}), 'resolved request introduced unknown fields')
+                        shape(item, schema['properties'][key])
+                if isinstance(value, list):
+                    for item in value:
+                        shape(item, schema['items'])
+                if 'enum' in schema:
+                    require(any(_json_equal(value, expected) for expected in schema['enum']), 'resolved request value is outside the source enum')
+                if actual in ('integer', 'number'):
+                    require(-float('inf') < value < float('inf'), 'non-finite request number')
+                    require('minimum' not in schema or value >= schema['minimum'], 'request number below source bound')
+                    require('maximum' not in schema or value <= schema['maximum'], 'request number above source bound')
+            shape(body, schema)
+            for path, variable in context_bindings.items():
+                declared = schema
+                for part in path.split('.'):
+                    declared = _resolve(declared, openapi).get('properties', {}).get(part, {})
+                if declared:
+                    require(_json_equal(_service_path(body, path), state.get(variable)), 'request changed or omitted trusted call context at ' + path)
+
+        for name, gate in gates.items():
+            if not gate.get('consent_required', True):
+                continue
+            text, event, authorization = gate['text_field'], gate['event_field'], gate['variable']
+            valid = copy.deepcopy(gate['fixture'])
+            valid[text] = gate['valid_text']
+            probe('independent_service_' + name + '_current_consent', gate['node'], valid,
+                  lambda output, gate=gate: require(output.get(gate['variable']) == gate['operand'], 'current valid consent did not authorize'))
+            for label, raw in (('empty', ''), ('negative', 'Hayır, onaylamıyorum.'), ('question', 'Bu işlem ne yapar?'), ('uncertain', 'Belki, emin değilim.')):
+                state = copy.deepcopy(valid)
+                state[text] = raw
+                probe('independent_service_' + name + '_' + label, gate['node'], state,
+                      lambda output, gate=gate: require(output.get(gate['variable']) != gate['operand'], 'untrusted current reply authorized an action'))
+            state = _run_check(snippets[gate['node']][0], {'vars': valid, 'expected': {}})['vars']
+            probe('independent_service_' + name + '_consumed_reply', gate['node'], state,
+                  lambda output, gate=gate: require(output.get(gate['variable']) != gate['operand'], 'consumed consent was reused'))
+            if gate.get('confirmation_required'):
+                changed = copy.deepcopy(valid)
+                changed[gate['readback_fingerprint_variable']] = '__different_readback__'
+                probe('independent_service_' + name + '_different_readback', gate['node'], changed,
+                      lambda output, gate=gate: require(output.get(gate['variable']) != gate['operand'], 'changed readback authorized an action'))
+                for field in gate.get('value_fields', []):
+                    changed = copy.deepcopy(valid)
+                    changed[field] = '__new_current_value__'
+                    probe('independent_service_' + name + '_current_correction_' + field, gate['node'], changed,
+                          lambda output, gate=gate: require(output.get(gate['variable']) != gate['operand'], 'current correction authorized an old action'))
+        for node, result in results.items():
+            prefix = result.get('response_prefix', node + '_response')
+            def state_for(envelope, result=result, prefix=prefix):
+                state = copy.deepcopy(result['fixture'])
+                for field in list(state):
+                    if field == prefix or field.startswith(prefix + '.'):
+                        del state[field]
+                state[result['success_variable']] = result['success_operand']
+                def flatten(value, path):
+                    state[path] = value
+                    if isinstance(value, dict):
+                        for key, item in value.items():
+                            flatten(item, path + '.' + key)
+                flatten(envelope, prefix)
+                return state
+            success = result['success_result']
+            probe('independent_service_' + node + '_current_success', result['result_node'], state_for(success),
+                  lambda output, result=result: require(output.get(result['success_variable']) == result['success_operand'], 'valid current API result did not succeed'))
+            failures = {'missing': {}, 'transport_failure': {**success, 'status': 'error', 'status_code': 503, 'data': {}}}
+            from builder.compiler import _service_schema_definition
+            operation = operations[api_nodes[node]][3]
+            def response_fields(schema, path=()):
+                schema = _resolve(schema, openapi)
+                for field, child in schema.get('properties', {}).items():
+                    child = _resolve(child, openapi)
+                    child_path = (*path, field)
+                    yield child_path, child, field in schema.get('required', [])
+                    yield from response_fields(child, child_path)
+            response = _resolve(operation.get('responses', {}).get(str(success.get('status_code')), {}), openapi)
+            source_schema = _service_schema_definition(response.get('content', {}).get('application/json', {}).get('schema', {}), openapi)
+            for index, (path, spec, required) in enumerate(response_fields(source_schema)):
+                target = success.get('data', {})
+                for part in path[:-1]:
+                    target = target.get(part, {}) if isinstance(target, dict) else {}
+                if not isinstance(target, dict) or path[-1] not in target:
+                    continue
+                if required:
+                    failed = copy.deepcopy(success)
+                    parent = failed['data']
+                    for part in path[:-1]:
+                        parent = parent[part]
+                    del parent[path[-1]]
+                    failures['missing_required_' + str(index)] = failed
+                types = _service_types(spec, openapi)
+                if not types:
+                    continue
+                wrong = None if 'null' not in types and not spec.get('nullable') else {} if 'object' not in types else [] if 'array' not in types else '__wrong_type__'
+                failed = copy.deepcopy(success)
+                parent = failed['data']
+                for part in path[:-1]:
+                    parent = parent[part]
+                parent[path[-1]] = wrong
+                failures['malformed_field_' + str(index)] = failed
+            business = result.get('business_success')
+            if business:
+                failed = copy.deepcopy(success)
+                target = failed
+                parts = business['path'].split('.')
+                for part in parts[:-1]:
+                    target = target.setdefault(part, {})
+                target[parts[-1]] = False if business['operand'] is True else '__not_business_success__'
+                failures['business_failure'] = failed
+            for label, envelope in failures.items():
+                def failed_outcome(output, result=result):
+                    require(output.get(result['success_variable']) != result['success_operand'] and output.get(result['speech_variable']) == result['failure_text'], 'failure reused success or claimed a successful action')
+                    audible_result(result['result_node'], output, result['failure_text'])
+                probe('independent_service_' + node + '_' + label, result['result_node'], state_for(envelope),
+                      failed_outcome)
+            for index, error in enumerate(result.get('error_outcomes', [])):
+                envelope = {'status': 'error', 'status_code': error['status']}
+                target = envelope
+                parts = error['path'].split('.')
+                for part in parts[:-1]:
+                    target = target.setdefault(part, {})
+                target[parts[-1]] = error['operand']
+                def error_outcome(output, result=result, error=error):
+                    require(output.get(result['success_variable']) != result['success_operand']
+                            and output.get(result['route_variable']) == error['route'] and output.get(result['speech_variable']) == error['speech'],
+                            'known warning lost its sourced outcome or was claimed as success')
+                    audible_result(result['result_node'], output, error['speech'])
+                probe('independent_service_' + node + '_sourced_error_' + str(index), result['result_node'], state_for(envelope), error_outcome)
+            entry = result['entry_node']
+            operation = api_nodes[node]
+            gate = gates.get(operation)
+            state = copy.deepcopy(gate['fixture'] if gate and gate.get('consent_required', True) else result['fixture'])
+            if gate and gate.get('consent_required', True):
+                state[gate['text_field']] = gate['valid_text']
+            for label, value in (('original_context', state.get(customer_variable)), ('changed_context', '88112233')):
+                current = copy.deepcopy(state)
+                current[customer_variable] = value
+                probe('independent_service_' + node + '_' + label + '_request', entry, current,
+                      lambda output, node=node: check_request(node, output))
+    return {'ok': not errors, 'valid': not errors, 'errors': errors, 'checks': reports}
+
+
 def validate(workflow, policy, openapi, checks, brief_lines=None):
     try:
+        if isinstance(policy, dict) and policy.get('workflow_kind') == 'service':
+            return _validate_service(workflow, policy, openapi, checks, brief_lines)
         return _validate(workflow, policy, openapi, checks, brief_lines)
     except (AttributeError, KeyError, TypeError, ValueError) as exc:
         return {"ok": False, "valid": False, "errors": [f"malformed generated data: {exc}"], "checks": []}

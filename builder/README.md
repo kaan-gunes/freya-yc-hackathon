@@ -1,10 +1,11 @@
-# First builder
+# Phone-agent builder
 
-This builder reads the supplied brief files and OpenAPI. It uses the local Codex
+This builder reads supplied brief files or a case folder and its service contract. It uses the local Codex
 CLI login with GPT-6.1-Sol to create a fresh policy, portable Freya workflow, and guard checks.
-It uses Python's standard library. The phone model stays as `freya.AGENT_LLM`.
+PDF reading uses pypdf; YAML contracts use PyYAML. DOCX and XLSX reading uses the
+standard library. The phone model stays as `freya.AGENT_LLM`.
 
-The first target is Brief A and PUB-01. Multi-product support is the next stage.
+The source task selects the collections or general inbound service profile.
 The source rules and any missing support are listed in each generated policy.
 Local guard checks are not a live test score.
 
@@ -16,6 +17,10 @@ The local CLI must support `exec --ignore-user-config`.
 From the repository root:
 
 ```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+
 # Generate and check locally. No Freya key is needed.
 bash scripts/build-agent.sh build-the-builder/briefs/brief-a.md \
   --openapi build-the-builder/tools/openapi.json --offline
@@ -25,6 +30,46 @@ bash scripts/build-agent.sh build-the-builder/briefs/brief-a.md \
 bash scripts/build-agent.sh build-the-builder/briefs/brief-a.md \
   --openapi build-the-builder/tools/openapi.json --slot kaan-brief-a
 ```
+
+## Final folder input
+
+The runner reads Markdown, UTF-8 text, JSON, YAML, CSV, PDF, DOCX and XLSX.
+JavaScript/TOML examples are read as inert text, never executed.
+Office macros and formulas are never executed. Excel formulas need a saved
+cached result. Scanned PDFs need OCR before this reader can use them; old
+`.doc` and `.xls` files must first be converted to modern Office formats.
+Unreadable or unsupported documents stop with their source path.
+
+```bash
+bash scripts/build-agent.sh "{case_folder}" --mock-url "{mock_url}" \
+  --slot core-final --submission-dir submission/selected
+```
+
+The folder must contain one explicit OpenAPI JSON/YAML contract, or complete
+HTTP integration documents. With no schema file, a separate model call extracts
+the contract with exact source-line evidence. Missing contracts, invented paths,
+unknown fields or unresolved contract facts stop before phone-agent generation. Multiple
+schemas require an explicit `--openapi path`. `--mock-url` is the complete service
+base combined with the exact contract paths. Extracted contracts keep the full
+original pathname, including any API prefix. All engine HTTP calls are bound to it before
+validation. The supplied contract's methods, paths and fields stay intact.
+
+Folder order is not rule priority. The builder uses source authority, version,
+effective date and explicit amendments; examples do not amend bank policy.
+It uses the requested conversation language. Turkish explicit consent, month
+names, day words and decimal-comma amounts preserve the existing safety gates.
+A reply confirming only one payment field does not approve the complete promise.
+Relative dates use sourced call time and bounds. DOB still needs a numeric year;
+fully word-spelled years are not supported by the shared normalizer.
+
+Folder runs skip practice simulations. File runs can use `--skip-tests`.
+Local validation, Freya dry-run, publish, readback, fixed phone-model check,
+published-version check and official export remain required. Successful online
+runs copy `export.workflow.json`, `trace.jsonl` and `manifest.json` into the empty
+submission directory. Existing delivery files are never overwritten. The trace
+includes the actual redacted Codex JSON session events, model purposes, timings,
+source hashes, IDs, node/tool counts and an explicit `not_run` test state.
+Candidate hashes prevent editing a generated candidate before a resume.
 
 Each run has a real wall-clock limit, at most 30 minutes, including model work
 and tests. Use the same slot to update the same workflow. The baseline is kept.

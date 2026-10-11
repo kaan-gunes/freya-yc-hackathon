@@ -1,0 +1,9 @@
+{
+  "name": "core-freya-final-mock",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test worker.test.js",
+    "deploy": "npx wrangler@4.142.0 deploy"
+  }
+}
