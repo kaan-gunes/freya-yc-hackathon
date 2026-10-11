@@ -939,8 +939,8 @@ def _independent_checks(nodes, snippets, security, checks):
         for role, input_label in (("identity_answer", "answer"), ("speech_text", "speech_text")):
             run(f"independent_identity_word_date_{input_label}_{label}", lambda raw=raw, expected=expected, role=role: identity_request_boundary(current_identity_state(identity_answer_fixture, roles[role], raw), expected, identity_request_context, "date"))
 
-    def missing_identity_year(role):
-        state = current_identity_state(identity_answer_fixture, roles[role], f"the {ordinal_day} of {month}.")
+    def missing_identity_year(role, raw=None):
+        state = current_identity_state(identity_answer_fixture, roles[role], raw if raw is not None else f"the {ordinal_day} of {month}.")
         for _, tool in verification_requests:
             field = tool.get("function", {}).get("parameters", {}).get("properties", {}).get("body", {}).get("properties", {}).get(answer_request_field, {})
             value = field.get("default")
@@ -954,6 +954,9 @@ def _independent_checks(nodes, snippets, security, checks):
             raise ValueError("identity date without a year must return to a real listener")
     for role, label in (("identity_answer", "answer"), ("speech_text", "speech_text")):
         run(f"independent_missing_identity_year_{label}", lambda role=role: missing_identity_year(role))
+        for form, year in (("grouped", "nineteen and"), ("thousand", "two thousand and")):
+            raw = f"the {ordinal_day_words(min(day.day, 28))} of {month} {year}."
+            run(f"independent_dangling_identity_year_{label}_{form}", lambda role=role, raw=raw: missing_identity_year(role, raw))
 
     code_prefix = "My last four digits are" if len(canonical_identity_code) == 4 else "My verification code is"
     for label, speech in (("period", canonical_identity_code + "."), ("prefix", code_prefix + " " + canonical_identity_code + ".")):

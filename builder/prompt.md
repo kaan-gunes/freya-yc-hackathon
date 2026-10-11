@@ -97,7 +97,8 @@ validation_identity_request_context: {actual verification question property:
                                      source-derived date-question operand}
 validation_identity_code_fixture: {complete pre-verification state for the
                                   pending numeric-code security question,
-                                  canonical synthetic digits in speech_text}
+                                  canonical synthetic digits starting with 0
+                                  in speech_text, without prefix/punctuation}
 validation_identity_code_request_context: {actual verification question property:
                                           source-derived numeric-code operand}
 validation_third_party_fixture: {complete pre-verification identity state with
@@ -215,6 +216,10 @@ may return the words rather than a number; they must not mask the bank amount or
 reach float() unchanged. Use the brief's meaning of full payment, not a remembered
 balance or earlier offer. If no exact payment date is agreed, ask for the date;
 do not ask again for a clearly accepted full amount or silently invent a date.
+An empty/no event with residual amount/date fields is not such an acceptance or
+offer. Return to a listener or source-based close, without entering the offer
+guard/readback. Require the current positive offer event, not just populated
+fields or a substring in raw text.
 Never turn a vague date into a silent concrete agreement. Counter updates must
 be per user decision, not per tool result or repeated node entry.
 Treat phrases such as "the week after next" as vague, not as a parsing failure
@@ -222,6 +227,11 @@ or a refusal. Preserve the proposed amount and ask for the exact day once under
 the input rule. A subsequent complete date continues to the offer guard; it must
 not keep asking the clarification after that date was supplied.
 
+Keep the main decision, offer guard and approval guard as distinct code nodes.
+The offer guard validates an already proposed state independently of new speech;
+only the main decision consumes negotiation extraction. The approval guard
+consumes its separate confirmation extraction. Do not loop a guard back through
+the main decision without a real listener.
 Use an offer guard code node to select the product from bank state and validate
 the proposed amount and date. Reject non-finite/negative amounts, out-of-policy
 bounds, impossible dates, past dates and dates beyond the policy deadline.
@@ -408,6 +418,9 @@ complete grouped year ("nineteen ninety") or cardinal year ("one thousand nine
 hundred and ninety"). Treat hyphens as word separators. Match the whole answer,
 validate with datetime.date and return the canonical ISO date. This is a small
 date grammar, not arbitrary prose digit extraction or a general number parser.
+Reject incomplete/dangling year connectors such as "nineteen and" or "two
+thousand and". An empty number-word group is missing, never zero. Optional "and"
+must join stated numeric groups, not erase missing words or supply a year tail.
 For payment dates, also accept a complete weekday-plus-ordinal day such as
 "Monday the 26th" when exactly one matching calendar date exists in the relevant
 call-based proposal range. Resolve the month/year from that bounded range and
@@ -457,6 +470,9 @@ No expected key is null. Include at least these exact check names:
   cannot authorize another write.
 - negative_confirmation: approval guard with a current refusal or question and
   stale prior authorization must clear the authorization and refuse recording.
+The exact required invalid_amount and invalid_date checks MUST target the
+declared offer_guard_node. Extra decision tests use different supplementary
+names; they cannot replace those mandatory guard checks.
 
 Add one ordinary valid offer and one explicit confirmation check. Add calendar
 boundaries, swapped identity hint, amount non-finite, and retry-budget checks if

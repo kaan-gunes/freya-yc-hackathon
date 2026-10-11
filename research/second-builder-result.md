@@ -15,7 +15,7 @@ Commit `65ec36a` covers fresh identity dates in the general date input, with a
 paired check that denies cached answers when all current speech is empty.
 Commit `46b658c` verifies fresh full-text identity answers safely and generated
 the tested version 5. Commit `cc9109d` adds the payment-parser follow-up.
-All 79 repository tests pass, and the builder self-check passes after the bounded
+All 81 repository tests pass, and the builder self-check passes after the bounded
 GET transport-retry and spoken-date follow-ups.
 Follow-up checks add normal identity completion, supplementary decision tests
 that cannot replace required guard tests, and three attempts within one deadline.
@@ -40,7 +40,7 @@ Follow-up checks reject silent extraction consuming persuasion, and a relative's
 identity answer after earlier first-party confirmation. Six new spoken-date
 checks send month-name, ordinal, comma and case variants through the actual
 decision and verification request. The resolved answer must be the same valid
-ISO date; account and record actions remain denied. The unit fixture has 69
+ISO date; account and record actions remain denied. The unit fixture has 73
 independent checks; the total depends on the candidate's secondary actions.
 A follow-up also checks the resolved request's sourced pending-question context,
 so a canonical date cannot be sent under a different security question. Its
@@ -85,6 +85,11 @@ windows, malformed dates/prose, raw numeric-year mutations and cached-year
 inference. Replaying v5 fails all eight word-DOB and both valid weekday probes,
 while the paired missing-year/wrong-weekday negatives pass. This proves the old
 parser gaps locally; it is not a new published score.
+Four further denial probes block dangling grouped/cardinal year connectors on
+both identity inputs. They use a valid day even for leap-year fixtures, so an
+impossible inferred century date cannot hide acceptance of an incomplete year.
+Two focused tests reproduce the strip-connector/zero-fill mutation and confirm
+all prior complete-year checks still pass.
 
 The test helper saves session, simulation, iteration and call IDs early. It
 keeps execution, result reading and scoring separate, accumulates owned version
@@ -175,6 +180,21 @@ the real decision must still return to a listener without a verification action.
 | `20261010T224719208056Z` | Completed; gate failed | 664.02 s | Version 3; PUB-01 0/1 |
 | `20261010T230434314580Z` | Completed; gate failed | 1359.46 s | Version 4; PUB-01 0/1 |
 | `20261010T234149659676Z` | Completed; gate passed | 640.39 s | Version 5; PUB-01 1/1 |
+| `20261011T003124952068Z` | Local validation stopped | 754.67 s | Neither |
+
+Run `20261011T003124952068Z`, from clean commit `5b8d4f9`, used three
+generation attempts but did not publish. The final candidate had three local
+errors: the required invalid amount/date checks targeted the decision instead
+of the declared offer guard, and a current no with residual full-amount fields
+entered the offer guard. Generator instructions now state distinct decision,
+offer and approval nodes and make the required check targets explicit.
+Read-only replay of its first unpublished candidate handled all five observed
+word-DOB forms and the callback/holiday date cases correctly. It also exposed a
+new partial-year corner case: dangling "and" became an empty numeric group with
+value zero. That is an unpublished parser probe, not a live bank attack. The
+follow-up rejects that form and adds paired denial probes before another build.
+Version 5 remains the tested published version; no score is assigned to this
+failed generation run. Its trace and rejected attempts are retained separately.
 
 Run `20261010T230434314580Z` started from clean commit `65ec36a`. The first
 candidate had four local errors. Its sparse repair changed only the failing

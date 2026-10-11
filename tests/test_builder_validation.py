@@ -908,6 +908,39 @@ class ValidationTests(unittest.TestCase):
         for label in ("answer", "speech_text"):
             self.assert_rejected(arguments, "independent_missing_identity_year_" + label)
 
+    def test_dangling_spoken_identity_years_are_denied_on_both_inputs(self):
+        arguments = candidate()
+        report = validate(*arguments)
+        self.assertTrue(report["ok"], report)
+        checks = [check for check in report["checks"] if check["name"].startswith("independent_dangling_identity_year_")]
+        self.assertEqual(len(checks), 4)
+        self.assertTrue(all(check["ok"] for check in checks), report)
+        code = arguments[0]["nodes"]["decision"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]["default"]
+        for field in ("speech_answer", "speech_text"):
+            for year in ("nineteen and", "two thousand and"):
+                with self.subTest(field=field, year=year):
+                    state = dict(arguments[1]["security"]["validation_identity_answer_fixture"], speech_answer="", speech_text="", verification_answer="1990-04-12")
+                    state[field] = "the twelfth of April " + year + "."
+                    _run_check(code, {"vars": state, "expected": {"route": "listen", "bank_status": "unverified", "record_authorization": "", "speech_answer": "", "speech_text": ""}})
+
+    def test_dangling_spoken_year_cannot_strip_and_then_fill_zero(self):
+        arguments = candidate()
+        code = arguments[0]["nodes"]["decision"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]
+        code["default"] = code["default"].replace("    raw = raw.replace('-', ' ').strip()", "    raw = raw.replace('-', ' ').strip()\n    if raw.endswith(' and'):\n        raw = raw[:-4]\n        if raw in ('eighteen', 'nineteen', 'twenty'):\n            raw += ' hundred'")
+        report = validate(*arguments)
+        old_checks = [check for check in report["checks"] if check["name"].startswith("independent_identity_word_date_") or check["name"].startswith("independent_missing_identity_year_")]
+        self.assertTrue(all(check["ok"] for check in old_checks), report)
+        checks = [check for check in report["checks"] if check["name"].startswith("independent_dangling_identity_year_")]
+        self.assertEqual(len(checks), 4)
+        self.assertTrue(all(not check["ok"] for check in checks), report)
+        for label in ("answer", "speech_text"):
+            for form in ("grouped", "thousand"):
+                self.assert_rejected(arguments, f"independent_dangling_identity_year_{label}_{form}")
+        arguments[1]["security"]["validation_identity_answer_fixture"]["speech_answer"] = "2004-02-29"
+        report = validate(*arguments)
+        checks = [check for check in report["checks"] if check["name"].startswith("independent_dangling_identity_year_")]
+        self.assertTrue(all(not check["ok"] for check in checks), report)
+
     def test_full_text_identity_paths_preserve_dates_and_leading_zero_codes(self):
         arguments = candidate()
         report = validate(*arguments)
