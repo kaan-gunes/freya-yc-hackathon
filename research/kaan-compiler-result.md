@@ -1,8 +1,8 @@
 # Calls incelemesi ve kaynak kontrollü Kaan çekirdeği
 
 11 Ekim 2026, Europe/Istanbul. Kullanıcı bu turda prompt yerine doğrudan geliştirme
-istedi. Başlangıç `fa0d0fe`; uygulama kaynağı
-[`020e4c3`](https://github.com/kaan-gunes/freya-yc-hackathon/commit/020e4c3973c003c87abf72a91af6327f970da947).
+istedi. Başlangıç `fa0d0fe`; son uygulama kaynağı
+[`d472fc2`](https://github.com/kaan-gunes/freya-yc-hackathon/commit/d472fc277153df5ab9ee84487f31a0d9fa3d6b46).
 İki ayrı inceleme agentı gerçek adayı ve güvenlik yollarını kontrol etti.
 
 **Sonuç: aynı Brief A girdilerinden, gerçek builder yolu ile yerelde geçerli bir
@@ -123,9 +123,9 @@ python3 scripts/build_agent.py build-the-builder/briefs/brief-a.md \
   --budget-seconds 1800
 ```
 
-- Run: `build-the-builder/out/20261011T154908350918Z/`, saat
-  **18:49:08–18:49:32**, **24,44 saniye**.
-- `status=completed_local`, `code_commit=020e4c3`, `code_dirty=false`.
+- Son run: `build-the-builder/out/20261011T155956791672Z/`, saat
+  **18:59:56–19:00:21**, **25,12 saniye**.
+- `status=completed_local`, `code_commit=d472fc2`, `code_dirty=false`.
 - `generation_attempts=[]`; bir `compilation_attempts` kaydı: valid true,
   errors boş. `offline=true`, `live_test.status=not_run`.
 - Trace: begin → candidate_seeded_for_compilation → workflow_compiled →
@@ -134,25 +134,40 @@ python3 scripts/build_agent.py build-the-builder/briefs/brief-a.md \
 - Claude'un tam seed SHA256'ı değişmedi:
   `7a6c1c6c8b0c4798dca74da71d9fb39263f35b40380e46998e6e062ad4f607a7`.
 - Yeni tam aday SHA256:
-  `ab8416a9254ca267c21673e670445e692d91901c7f98d05b54c2600d8a14a882`.
+  `1710420e88b6ab6a124a6adc21c2c10ff5f589dc90980ea22d50acec95ecee85`.
 - Compiler SHA256:
-  `fe8bb43a1b624b694c622b1b86870d63354316975ddf865ad6ebfcfc55f5ace8`
-  (283 satır). Gerçek manifest kaynak/hash eşleşmesi ve `resume_candidate`
+  `6f67a1967bd557c325605aa86dcecee56322ba57c005b3abffe5d1c206cf252e`
+  (287 satır). Gerçek manifest kaynak/hash eşleşmesi ve `resume_candidate`
   aynı tam adayı model çağırmadan geri veriyor.
 - Eski generated checks aynen korunuyor. Ek 18 bağımsız kontrol kaynak
   validator'dan geliyor. Daha önce bunlardan ikisi eski 214 kontrolü geçen
   adayda AI cevabının kaybolduğunu bağımsız olarak göstermişti.
 
+Teslim öncesinde üç local compilation yapıldı; hepsinde sıfır model/Freya
+çağrısı vardı. İlk `020e4c3` run'ı (`154908350918Z`) **24,44 saniyede 232/232**
+geçti. Son audit, sayısal onayın arkasındaki `I cannot afford it` metninin
+yanlış kabulünü buldu; tarih grammar'ı daraltıldı. Ara `41a0c53` run'ı
+(`155507262930Z`, **12,51 saniye**) f-string içinde kullanılan çift süslü
+parantezlerin portable Python kapısında reddedilmesiyle durdu. Bu sınır
+gevşetilmedi; regex kaynak biçimi düzeltildi ve helper'ın gerçek `_parse`
+kapısından geçtiği test eklendi. Yukarıdaki son run tüm kontrolleri tekrar
+geçti. Teslim adayı yalnız son run'dır.
+
 ## Kontroller ve sınırlar
 
 - Runner, compiler-intent, confirmation-return ve compile-build testleri:
-  **36/36**, **1,242 saniye**. Mock'lu testlerde yazan publish/test satırları
+  **37/37**, **1,121 saniye**. Mock'lu testlerde yazan publish/test satırları
   gerçek platform işlemi değildir.
 - Mevcut focused approval/retry testleri: **11/11**, **112,618 saniye**.
 - Önceki v7 conversation testleri bu validator eklemesinden sonra **5/5**
   geçti; beklentileri değiştirilmedi. `self_check()` ve `git diff --check` geçti.
-- İki ayrı inceleme gerçek güncel adayı **232/232** doğruladı. Idempotence,
+- İki ayrı inceleme ilk kaynak compiler'ın gerçek adayını **232/232** doğruladı.
+  Son kaynakla gerçek CLI validator aynı 232 kontrolü tekrar geçti. Idempotence,
   seed/check değişmezliği, yanlış onay ve güvenli 500 retry kontrol edildi.
+- Son artifact bağımsız olarak ayrıca incelendi: altı girdi ve compiler hash'i
+  eşleşiyor, graf geçerli, resume aynı adayı döndürüyor. On tehlikeli raw
+  onay replay'i kayıt/yetki açmadı; güvenli 500 retry ikinci yetkili kayıt
+  isteğine ulaştı. Bu inceleme tam validator suite'ini tekrar çalıştırmadı.
 - Gerçek PUB-04 state replay'i artık AI cevabını deadline readback'iyle birlikte
   söylüyor; kayıt yetkisi boş kalıyor. Gerçek arşiv replay'leri ve mutant
   kanıtları ignored `build-the-builder/out/kaan-compiler-review/` altında.
