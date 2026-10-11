@@ -22,6 +22,24 @@ def api_tool(url, name="source_action"):
 
 
 class FinalRunnerChecks(unittest.TestCase):
+    def test_native_codex_session_matches_call_and_missing_log_fails(self):
+        thread = "00000000-0000-0000-0000-000000000001"
+        stdout = json.dumps({"type": "thread.started", "thread_id": thread}) + "\n"
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"CODEX_HOME": directory}):
+            folder = Path(directory) / "sessions" / "date"
+            folder.mkdir(parents=True)
+            rows = [{"type": "session_meta", "payload": {"id": thread}},
+                    {"type": "response_item", "payload": {"role": "user", "content": "Full supplied input"}}]
+            log = folder / ("rollout-date-" + thread + ".jsonl")
+            log.write_text("\n".join(json.dumps(row) for row in rows))
+            self.assertEqual(runner.codex_session_records(stdout), rows)
+            log.write_text(json.dumps({"type": "session_meta", "payload": {"id": "another-session"}}))
+            with self.assertRaisesRegex(ValueError, "different model call"):
+                runner.codex_session_records(stdout)
+            log.unlink()
+            with self.assertRaisesRegex(ValueError, "could not be matched"):
+                runner.codex_session_records(stdout)
+
     def test_json_prompt_whitespace_preserves_all_values_and_source_line_evidence(self):
         content = json.dumps({"records": [{"label": "  keep these spaces  ", "balance": 123.45}]}, indent=8)
         numbered = runner.numbered_source(Path("records.json"), content)
@@ -170,6 +188,7 @@ class FinalRunnerChecks(unittest.TestCase):
                 if command[:2] == ["git", "status"]:
                     return 0, "", ""
                 self.assertEqual(command[0], "codex", "final must never invoke the practice helper")
+                self.assertNotIn("--ephemeral", command)
                 self.assertNotIn("FREYA_API_KEY", kwargs["env"])
                 generated.append(kwargs["input_text"])
                 if prose and len(generated) == 1:

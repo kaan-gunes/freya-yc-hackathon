@@ -145,6 +145,9 @@ class BuildAgentChecks(unittest.TestCase):
                                             "checks": [{"id": "replacement"}]}],
                             expected_workflow={"nodes": {"guard": {"code": "repaired"}}}, expected_checks=[{"id": "replacement"}])
 
+    def test_repair_merges_the_uncompiled_draft_and_recompiles_before_publish(self):
+        self.run_mock_build(compiler_marker=True, expected_workflow={"nodes": {}, "compiler_marker": True})
+
     def test_malformed_first_response_requests_a_full_candidate_before_sparse_repair(self):
         self.run_mock_build(malformed_first=True)
 
@@ -160,7 +163,7 @@ class BuildAgentChecks(unittest.TestCase):
 
     def run_mock_build(self, *, simulation_extra=None, raw_call=None, dry_run_rejections=1,
                        repair_patches=None, expected_workflow=None, expected_checks=None, malformed_first=False,
-                       resume=False, resume_failure=None):
+                       resume=False, resume_failure=None, compiler_marker=False):
         with tempfile.TemporaryDirectory() as directory:
             kit = Path(directory).resolve() / "kit"
             (kit / "docs").mkdir(parents=True)
@@ -231,6 +234,14 @@ class BuildAgentChecks(unittest.TestCase):
                 "simulation_id": "mock-simulation", "iteration_id": "mock-iteration",
             }))
             prompts, deadlines = [], []
+            from builder.compiler import compile_candidate as actual_compile
+            def compile_candidate(value, schema=None):
+                if not compiler_marker:
+                    return actual_compile(value)
+                self.assertNotIn("compiler_marker", value["workflow"])
+                compiled = copy.deepcopy(value)
+                compiled["workflow"]["compiler_marker"] = True
+                return compiled, []
 
             def invoke(command, deadline, **kwargs):
                 deadlines.append(deadline)
@@ -243,6 +254,8 @@ class BuildAgentChecks(unittest.TestCase):
                     self.assertNotIn("FREYA_API_KEY", kwargs["env"])
                     self.assertNotIn("FREYA_BANK_TEAM_KEY", kwargs["env"])
                     index = len(prompts)
+                    if compiler_marker and index:
+                        self.assertNotIn("compiler_marker", kwargs["input_text"])
                     payload = ("not JSON" if malformed_first and index == 0 else json.dumps(
                         candidate if index == int(malformed_first) else repair_patches[index - 1 - int(malformed_first)]))
                     Path(command[command.index("-o") + 1]).write_text(payload)
@@ -273,6 +286,7 @@ class BuildAgentChecks(unittest.TestCase):
                      "errors": ["Invalid current workflow"] if resume_failure == "invalid" else [], "checks": []}
             error = "POST /api/v2/workflow -> 400: Missing workflow.tools.0.function.description"
             with patch.object(runner, "KIT", kit), patch.object(runner, "invoke", invoke), \
+                    patch("builder.compiler.compile_candidate", side_effect=compile_candidate), \
                     patch.object(runner, "source", side_effect=current_source), \
                     patch("builder.validation.validate", side_effect=lambda *args, **kwargs: copy.deepcopy(local)) as local_validation, \
                     patch("freya.validate_workflow", side_effect=([runner.BudgetExpired("Time budget ended")] if resume_failure == "budget"

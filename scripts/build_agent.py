@@ -43,6 +43,29 @@ def model_environment():
                     or name in ("CODEX_THREAD_ID", "CODEX_INTERNAL_ORIGINATOR_OVERRIDE"))}
 
 
+def codex_session_records(stdout):
+    records = []
+    for line in stdout.splitlines():
+        try:
+            item = json.loads(line)
+        except ValueError:
+            continue
+        if item.get("type") != "thread.started":
+            continue
+        thread_id = item.get("thread_id", "")
+        if not re.fullmatch(r"[0-9a-f-]{36}", thread_id):
+            raise ValueError("Codex reported an invalid session id.")
+        session_root = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")) / "sessions"
+        paths = list(session_root.rglob(f"*-{thread_id}.jsonl"))
+        if len(paths) != 1:
+            raise ValueError("The full Codex session log could not be matched to this model call.")
+        session = [json.loads(row) for row in paths[0].read_text().splitlines()]
+        if not session or session[0].get("type") != "session_meta" or session[0].get("payload", {}).get("id") != thread_id:
+            raise ValueError("The Codex session log belongs to a different model call.")
+        records.extend(session)
+    return records
+
+
 def write_json(path, value):
     path.write_text(redact(json.dumps(value, indent=2, ensure_ascii=False)) + "\n")
 
@@ -515,7 +538,7 @@ def main():
                        + " as the API service base URL. Preserve the supplied OpenAPI operation paths, schemas and methods. "
                          "This changes infrastructure only; it adds no business rules. The runner binds all HTTP calls before validation.\n")
         (folder / "input-prompt.txt").write_text(redact(prompt))
-        command = ["codex", "exec", "--ignore-user-config", "--ephemeral", "--json", "--color", "never",
+        command = ["codex", "exec", "--ignore-user-config", "--json", "--color", "never",
                    "-s", "read-only", "-o", str(folder / "raw.json")]
         for feature in ("shell_tool", "unified_exec", "apps", "plugins", "hooks", "multi_agent"):
             command += ["--disable", feature]
@@ -574,6 +597,8 @@ def main():
                         event("agent_session", phase="contract", item=json.loads(line))
                     except ValueError:
                         pass
+                for item in codex_session_records(stdout):
+                    event("agent_session_record", phase="contract", item=item)
                 model, rows, errors = model_metadata(stdout, stderr, args.model)
                 event("model_end", phase="contract", model=model, purpose=purpose, exit_code=returncode)
                 if returncode:
@@ -599,7 +624,7 @@ def main():
         manifest["input_reader_source"] = source(ROOT / "builder/inputs.py")[0]
         if (ROOT / "builder/language.py").exists():
             manifest["language_source"] = source(ROOT / "builder/language.py")[0]
-        model_prompt, all_events, candidate = prompt, [], None
+        model_prompt, all_events, candidate, draft_candidate = prompt, [], None, None
         if args.repair_build or args.compile_build:
             lock = (KIT / ".builder.lock").open("a")
             try:
@@ -607,6 +632,7 @@ def main():
             except BlockingIOError:
                 raise RuntimeError("Another builder owns the local workspace lock.") from None
             seed, candidate = repair_candidate(args.repair_build or args.compile_build, sources, slot, mock_url=args.mock_url)
+            draft_candidate = copy.deepcopy(candidate)
             if not isinstance(candidate, dict) or set(candidate) != {"policy", "workflow", "checks", "uncertainties", "summary"}:
                 raise ValueError("Repair seed must be a complete candidate.")
             manifest["compile_seed" if args.compile_build else "repair_seed"] = seed
@@ -631,7 +657,7 @@ def main():
             event("candidate_reused", **reuse)
             print("Revalidating the saved candidate; no model generation or repair.", flush=True)
         for attempt in ((1,) if args.resume_build or args.repair_build or args.compile_build else (1, 2, 3)):
-            output_format = "compiled_candidate" if args.compile_build else "merge_patch" if candidate is not None else "full_candidate"
+            output_format = "compiled_candidate" if args.compile_build else "merge_patch" if draft_candidate is not None else "full_candidate"
             raw_path = folder / "raw.json"
             if not args.resume_build and not args.compile_build:
                 purpose = ("Repair an untrusted same-input draft against the current compiler contract." if args.repair_build else
@@ -656,6 +682,8 @@ def main():
                         event("agent_session", attempt=attempt, item=json.loads(line))
                     except ValueError:
                         pass
+                for item in codex_session_records(stdout):
+                    event("agent_session_record", attempt=attempt, item=item)
                 manifest["builder_model"] = model
                 all_events += [{"attempt": attempt, **row} for row in rows]
                 write_json(folder / "model-events.json", all_events)
@@ -667,12 +695,13 @@ def main():
             (folder / f"raw-attempt-{attempt}.json").write_text(redact(raw_text))
             try:
                 raw = parse_model_output(raw_text)
-                if candidate is not None and not args.compile_build:
-                    raw = merge_patch(candidate, raw)
+                if draft_candidate is not None and not args.compile_build:
+                    raw = merge_patch(draft_candidate, raw)
                 if not isinstance(raw, dict) or set(raw) != {"policy", "workflow", "checks", "uncertainties", "summary"}:
                     raise ValueError("Model result must contain exactly policy/workflow/checks/uncertainties/summary.")
                 if not isinstance(raw["uncertainties"], list) or any(not isinstance(item, str) for item in raw["uncertainties"]) or not isinstance(raw["summary"], str):
                     raise ValueError("Model uncertainties must be a string list and summary must be a string.")
+                draft_candidate = copy.deepcopy(raw)
                 if not args.resume_build:
                     raw, changes = (compile_candidate(raw, openapi) if raw["policy"].get("workflow_kind") == "service"
                                     else compile_candidate(raw))
@@ -753,11 +782,13 @@ def main():
                 "with changed policy/workflow/checks/uncertainties/summary fields. Omit unchanged fields. "
                 "Objects merge recursively, null deletes a key, and arrays replace the whole array. "
                 "Include complete replacement code strings only when they change."
-                if candidate is not None else
+                if draft_candidate is not None else
                 "Return a complete corrected plain JSON object with policy/workflow/checks/uncertainties/summary.")
-            model_prompt = (prompt + "\n=== PRIOR GENERATED CANDIDATE ===\n" + redact(json.dumps(candidate) if candidate is not None else raw_text)
-                            + "\n=== VALIDATION ERRORS ===\n" + redact(json.dumps(report, ensure_ascii=False))
+            repair_report = {**report, "checks": [row for row in report.get("checks", []) if row.get("ok") is not True]}
+            model_prompt = (prompt + "\n=== PRIOR GENERATED CANDIDATE (BEFORE COMPILATION) ===\n" + redact(json.dumps(draft_candidate, ensure_ascii=False) if draft_candidate is not None else raw_text)
+                            + "\n=== VALIDATION ERRORS ===\n" + redact(json.dumps(repair_report, ensure_ascii=False))
                             + "\n" + repair_instruction + " "
+                            "Validation errors refer to the compiled workflow; fix matching draft code/policy, without adding compiler-owned helpers or markers. "
                             "Use only the original inputs for business facts. Do not weaken checks or skip source rules.\n")
         if not valid:
             raise ValueError("Candidate failed validation; see validation.json.")

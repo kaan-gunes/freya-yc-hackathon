@@ -67,7 +67,8 @@ Local validation, Freya dry-run, publish, readback, fixed phone-model check,
 published-version check and official export remain required. Successful online
 runs copy `export.workflow.json`, `trace.jsonl` and `manifest.json` into the empty
 submission directory. Existing delivery files are never overwritten. The trace
-includes the actual redacted Codex JSON session events, model purposes, timings,
+includes the actual redacted full native Codex session records matched by thread ID,
+stdout events, model purposes, timings,
 source hashes, IDs, node/tool counts and an explicit `not_run` test state.
 Candidate hashes prevent editing a generated candidate before a resume.
 
