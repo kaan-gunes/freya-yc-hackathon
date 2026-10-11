@@ -1,7 +1,8 @@
 # Second builder result - 2026-10-11
 
-Status: versions 2, 3 and 4 failed PUB-01 for different identity-input bugs.
-Follow-up compiler fixes and checks are in progress; no stable live pass is claimed.
+Status: version 5 passed PUB-01 once and all three repeats without an update.
+The ten-case Brief A run is pending. Payment-parser follow-ups are source-only
+until the next build; no broader success claim is made.
 Dates in this report use Europe/Istanbul. Artifact names use UTC.
 
 ## Code and checks
@@ -12,7 +13,9 @@ Follow-up commit `881bd1c` validates spoken identity dates and uses sparse repai
 Commit `6482ae1` adds the pending-question request-context regression.
 Commit `65ec36a` covers fresh identity dates in the general date input, with a
 paired check that denies cached answers when all current speech is empty.
-All 64 repository tests pass, and the builder self-check passes.
+Commit `46b658c` verifies fresh full-text identity answers safely and generated
+the tested version 5. All 71 repository tests pass, and the builder self-check
+passes after the latest payment-parser follow-up.
 Follow-up checks add normal identity completion, supplementary decision tests
 that cannot replace required guard tests, and three attempts within one deadline.
 
@@ -36,7 +39,7 @@ Follow-up checks reject silent extraction consuming persuasion, and a relative's
 identity answer after earlier first-party confirmation. Six new spoken-date
 checks send month-name, ordinal, comma and case variants through the actual
 decision and verification request. The resolved answer must be the same valid
-ISO date; account and record actions remain denied. The unit fixture has 44
+ISO date; account and record actions remain denied. The unit fixture has 55
 independent checks; the total depends on the candidate's secondary actions.
 A follow-up also checks the resolved request's sourced pending-question context,
 so a canonical date cannot be sent under a different security question. Its
@@ -52,6 +55,19 @@ empty/unknown/question events and third-party phone answers. Each date-format
 probe clears every other current speech field, so a second canonical field
 cannot hide a broken parser. The numeric fixture requires a leading zero but
 has no global fixed length; a renamed six-digit question regression passes.
+
+The payment follow-up adds current raw amount and trusted bank full-amount roles.
+A current explicit "full amount" reference must resolve that bank amount, pass
+readback and fresh approval, and bind the same amount in the real record request.
+The speech decision cannot overwrite the bank fact. Empty/no events remain
+denied. Currency-unit inputs pass both the current decision and shared offer
+guard, which also handles confirmation corrections. Negative chains reject
+non-finite, negative and zero values, plus arbitrary prose/date digit extraction.
+These eleven added checks reproduce v5's payment re-ask bugs before publication.
+Amounts fully written as words remain a safe request for an exact number; no
+new number-word framework or dependency was added. No currency field is declared
+in this Brief/OpenAPI; these probes cover the observed numeric "dollars" suffix,
+not currency conversion or general multi-currency support.
 
 The test helper saves session, simulation, iteration and call IDs early. It
 keeps execution, result reading and scoring separate, accumulates owned version
@@ -136,6 +152,7 @@ the real decision must still return to a listener without a verification action.
 | `20261010T220403404639Z` | Budget ended during test | 1800.01 s | Version 2; recovered PUB-01 0/1 |
 | `20261010T224719208056Z` | Completed; gate failed | 664.02 s | Version 3; PUB-01 0/1 |
 | `20261010T230434314580Z` | Completed; gate failed | 1359.46 s | Version 4; PUB-01 0/1 |
+| `20261010T234149659676Z` | Completed; gate passed | 640.39 s | Version 5; PUB-01 1/1 |
 
 Run `20261010T230434314580Z` started from clean commit `65ec36a`. The first
 candidate had four local errors. Its sparse repair changed only the failing
@@ -159,9 +176,50 @@ checks cover both raw-text-only paths and the blank/cached-answer boundary.
 The helper reports 157 fallback-state route events, not 157 distinct decisions.
 No schema-write rejection, extraction error or unmatched route was found.
 
-## Live Evidence
+Run `20261010T234149659676Z` started from clean commit `46b658c`. Its first
+candidate was rejected locally. A sparse repair corrected manifests, bank-flag
+initialization, a noncanonical numeric fixture and an unsupported local regex
+flag alias. The full candidate passed 99 local checks (45 independent), Freya
+dry-run, version 5 publication, readback and export. The run including PUB-01
+finished in 640.39 seconds, under its 30-minute limit. The official score was
+1/1 in `build-the-builder/results/20261010T235144618977Z-404df3cd`, simulation
+`46d61040-f487-4375-9422-73b209da2a6c`, iteration
+`b24d8360-b067-45aa-8b1b-f3c72017360a`, call
+`6b2beacf-4366-4d8f-8672-1de327fab99a`. Owned call evidence proves version 5.
+Tools ran in the required order: two identity checks, account, one authorized
+promise, then close. Current identity and confirmation strings were cleared;
+no schema-write rejection, extraction failure or unmatched route was found.
+This call used specialized identity fields. Replaying its exact fresh answers
+with those fields blanked and only full text present reaches identical requests;
+that is local replay, not direct live fallback-path evidence.
 
-The stable slot currently identifies agent
+A separate run of the unchanged version 5 passed all three PUB-01 repeats in
+`build-the-builder/results/20261010T235302576988Z-404df3cd` (347.70 seconds of
+simulation time; 359.68 seconds wall time).
+All execution, result reads and scoring completed, with owned version 5 evidence:
+
+| Simulation | Iteration | Call | Result |
+| --- | --- | --- | --- |
+| `d715636d-5454-471c-b200-ee3f53b15561` | `de024fec-de70-479c-a3d4-0285efc38438` | `21706835-8048-4a41-98d0-4652e0dd0167` | Pass |
+| `29a4b1d8-7359-48de-993c-1f0e47e030f7` | `c1bc3efc-8679-4473-b925-79d8646af9f3` | `b5dae0cc-3e07-4ccf-a3ae-adcc76afcb1a` | Pass |
+| `4a5b0f65-6c01-4fb2-a387-25ad017612a9` | `d9583181-3b5e-42c2-958c-94e7cf53d204` | `0c78a9cc-ca91-4e7e-8be0-7024d90f20b3` | Pass |
+
+The first call's post-DOB empty-input fallback is normal tool-result recovery,
+not another caller error. Its full-amount words did cause one unnecessary payment
+re-ask. The two slower repeats had 15 and 24 payment parse re-asks; identity still
+completed in two answers. Most rejected amounts were numeric with a "dollars"
+suffix (34 of 39), two were full-amount references, and three were number words.
+No unsafe write or persuasion use occurred. Removing only the numeric suffix in
+each actual pre-guard state reaches confirmation. The source follow-up addresses
+the full-amount and unit-suffix faults; it has not yet generated a new live version.
+
+The ten-case Brief A batch on unchanged version 5 is pending in
+`build-the-builder/results/20261010T235951416344Z-404df3cd`, simulation
+`6e2fb6f2-91fe-4f1b-8e8e-aebcd238a71c`. No score is assigned while pending.
+
+## Historical v2 Evidence
+
+The stable slot identifies agent
 `404df3cd-803d-4656-89ac-ac122f9d31d2` and workflow
 `e14dbbfa-9fd9-4bb0-9a4e-882897366f8d`. Owned call metadata proves tested
 version 2. Its simulation is `593e7c3c-b38d-45a1-8d1d-bf42372a45db`, iteration
@@ -185,9 +243,10 @@ not reached, so that part still needs live evidence. A wrapper path fix allows
 the documented repository-relative resume command; its regression covers resume
 and custom case paths.
 
-Versions 2, 3 and 4 failed the first gate, so no three-repeat or full Brief A claim is made.
-The next version must pass PUB-01 once, then three repetitions on the same
-published version, then all ten Brief A cases and correction/split-answer styles.
+Versions 2, 3 and 4 failed the first gate. Version 5 passed once and three repeats.
+Full Brief A and correction/split-answer styles are not yet claimed as passing.
+The next source follow-up must be generated and pass the same first/repeat gates
+before its broader test results can replace version 5's evidence.
 Generated workflow files have not been edited by hand.
 
 Open scope: A+B and multiple products, a separate LLM controller, and aggressive

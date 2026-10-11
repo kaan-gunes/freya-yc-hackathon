@@ -46,12 +46,14 @@ def candidate():
 import re
 event = vars.get('speech_event', '')
 current_date = vars.get('speech_date', '')
+current_amount = vars.get('speech_amount', '')
 speech_text = vars.get('speech_text', '')
 answer = vars.get('speech_answer', '') or current_date or speech_text
 party = vars.get('party_confirmation', '')
 vars['speech_event'] = ''
 vars['speech_answer'] = ''
 vars['speech_date'] = ''
+vars['speech_amount'] = ''
 vars['speech_text'] = ''
 vars['record_authorization'] = ''
 vars['persuasion_attempts'] = int(vars.get('persuasion_attempts', 0))
@@ -63,6 +65,9 @@ elif vars.get('bank_status') == 'verified' and vars.get('stage') in ('identity',
     vars['route'] = 'account'
 elif vars.get('bank_status') == 'verified' and event == 'no':
     vars['persuasion_attempts'] += 1
+elif vars.get('bank_status') == 'verified' and vars.get('stage') == 'payment' and event == 'yes' and current_amount and current_date:
+    vars['amount'] = vars.get('bank_full_amount') if current_amount.strip().lower() == 'full amount' else current_amount
+    vars['date'] = current_date
     vars['route'] = 'offer'
 elif event == 'yes' and party != 'confirmed':
     vars['party_confirmation'] = 'confirmed'
@@ -92,15 +97,19 @@ elif party == 'confirmed' and answer and event == 'yes':
     except (ValueError, IndexError):
         pass
 """
-    offer = """import datetime
+    offer = r"""import datetime
+import re
 vars['record_authorization'] = ''
 vars['offer_fingerprint'] = ''
 vars['readback_fingerprint'] = ''
 vars['route'] = 'end'
 try:
     day = datetime.date.fromisoformat(vars.get('date', ''))
-    amount = float(vars.get('amount', 0))
+    raw_amount = str(vars.get('amount', 0)).strip()
+    currency = re.fullmatch(r'([+-]?(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?)\s+dollars', raw_amount)
+    amount = float(currency.group(1) if currency else raw_amount)
     if 20 <= amount < float('inf') and '2026-10-14' <= day.isoformat() <= '2026-10-20':
+        vars['amount'] = amount
         vars['validated_product'] = vars.get('bank_product', '')
         vars['validated_amount'] = amount
         vars['validated_date'] = day.isoformat()
@@ -132,7 +141,7 @@ elif not vars.get('recorded') and vars.get('offer_fingerprint') and vars.get('of
     transfer_guard = "vars['transfer_authorization'] = ''\nif vars.get('exception') in ('human', 'plan', 'dispute'):\n    vars['transfer_queue'] = 'restructuring' if vars['exception'] == 'plan' else 'support'\n    vars['transfer_authorization'] = 'authorized'\n"
     closing = "body = config.get('body', {})\nbody['outcome'] = vars.get('outcome', 'not_verified')\nif body['outcome'] in ('promise', 'paid'):\n    body.pop('reason', None)\nelse:\n    body['reason'] = vars.get('reason', 'declined')\nconfig['body'] = body\n"
     workflow = {"initial_node": "identity", "nodes": {
-        "identity": {"name": "identity", "node_type": "conversation", "on_enter": {"type": "tts", "text": "Am I speaking with the customer?"}, "extraction_schema": [{"name": "speech_event", "type": "string", "enum": ["", "yes", "no", "question", "third_party"], "min_confidence": 0, "max_retries": 1}, {"name": "speech_answer", "type": "string", "min_confidence": 0, "max_retries": 1}, {"name": "speech_date", "type": "string", "min_confidence": 0, "max_retries": 1}, {"name": "speech_text", "type": "string", "min_confidence": 0, "max_retries": 1}], "transitions": [route("decision")]},
+        "identity": {"name": "identity", "node_type": "conversation", "on_enter": {"type": "tts", "text": "Am I speaking with the customer?"}, "extraction_schema": [{"name": "speech_event", "type": "string", "enum": ["", "yes", "no", "question", "third_party"], "min_confidence": 0, "max_retries": 1}, {"name": "speech_answer", "type": "string", "min_confidence": 0, "max_retries": 1}, {"name": "speech_date", "type": "string", "min_confidence": 0, "max_retries": 1}, {"name": "speech_amount", "type": "string", "min_confidence": 0, "max_retries": 1}, {"name": "speech_text", "type": "string", "min_confidence": 0, "max_retries": 1}], "transitions": [route("decision")]},
         "decision": code_node("decision", decision, [route("account", {"logic": "or", "conditions": [{"logic": "and", "conditions": [guard("bank_status", "verified"), guard("route", "account")]}]}), route("verify", guard("route", "verify")), route("offer", guard("route", "offer")), route("identity")]),
         "verify": {"name": "verify", "node_type": "api_request", "passthrough": True, "pre_actions": [api("verify_identity", {"customer_id": "{{customer_id}}", "field": "{{verification_question}}", "answer": "{{verification_answer}}"}, post_process_code=identity)], "transitions": [route("decision")]},
         "account": {"name": "account", "node_type": "api_request", "passthrough": True, "pre_actions": [api("get_account", {"customer_id": "{{customer_id}}"})], "transitions": [route("offer")]},
@@ -147,14 +156,14 @@ elif not vars.get('recorded') and vars.get('offer_fingerprint') and vars.get('of
     workflow["tools"][0]["config"]["alwaysRunsAt"] = ["end_of_call"]
     policy = {"security": {
         "customer_id_field": "customer_id", "customer_id_variable": "customer_id",
-        "identity_nodes": ["identity"], "trusted_variables": ["bank_status", "record_authorization", "recorded", "validated_product", "validated_amount", "validated_date", "offer_fingerprint", "readback_fingerprint", "exception", "route", "stage", "write_attempts", "write_result", "persuasion_attempts", "party_confirmation", "verification_answer", "verification_question", "code_length", "transfer_authorization", "transfer_queue"],
+        "identity_nodes": ["identity"], "trusted_variables": ["bank_status", "bank_full_amount", "record_authorization", "recorded", "validated_product", "validated_amount", "validated_date", "offer_fingerprint", "readback_fingerprint", "exception", "route", "stage", "write_attempts", "write_result", "persuasion_attempts", "party_confirmation", "verification_answer", "verification_question", "code_length", "transfer_authorization", "transfer_queue"],
         "bank_verification_variable": "bank_status", "bank_gate": {"node": "decision", "variable": "bank_status", "operand": "verified", "target": "account"},
         "account_nodes": ["account"], "offer_guard_node": "offer", "approval_guard_node": "approval", "confirmation_nodes": ["confirmation"], "record_nodes": ["record"], "close_nodes": ["end"],
         "decision_node": "decision", "write_attempt_limit": 2, "party_confirmation_operand": "confirmed", "identity_answer_request_field": "answer", "validation_identity_request_context": {"field": "date_of_birth"}, "validation_identity_code_request_context": {"field": "phone_last4"},
-        "validation_state": {"proposed_amount": "amount", "proposed_date": "date", "approval_event": "approval", "correction": "correction", "decision_event": "speech_event", "decision_date": "speech_date", "identity_answer": "speech_answer", "speech_text": "speech_text", "persuasion_attempts": "persuasion_attempts", "party_confirmation": "party_confirmation", "recorded": "recorded", "offer_fingerprint": "offer_fingerprint", "readback_fingerprint": "readback_fingerprint", "exception": "exception", "route": "route", "stage": "stage", "write_attempts": "write_attempts", "write_result": "write_result"},
+        "validation_state": {"proposed_amount": "amount", "proposed_date": "date", "approval_event": "approval", "correction": "correction", "decision_event": "speech_event", "decision_date": "speech_date", "decision_amount": "speech_amount", "full_amount": "bank_full_amount", "identity_answer": "speech_answer", "speech_text": "speech_text", "persuasion_attempts": "persuasion_attempts", "party_confirmation": "party_confirmation", "recorded": "recorded", "offer_fingerprint": "offer_fingerprint", "readback_fingerprint": "readback_fingerprint", "exception": "exception", "route": "route", "stage": "stage", "write_attempts": "write_attempts", "write_result": "write_result"},
         "validation_events": {name: name for name in ("yes", "no", "question", "human", "plan", "hardship", "dispute", "third_party")},
         "validation_routes": {name: name for name in ("account", "confirmation", "record", "offer", "transfer", "end")},
-        "validation_fixture": {"customer_id": "c-fixture", "amount": "25", "date": "2026-10-14", "bank_product": "p1", "now": "2026-10-14T09:00:00", "bank_status": "verified", "stage": "payment"},
+        "validation_fixture": {"customer_id": "c-fixture", "amount": "25", "date": "2026-10-14", "bank_product": "p1", "bank_full_amount": 50, "now": "2026-10-14T09:00:00", "bank_status": "verified", "stage": "payment"},
         "validation_confirmation_fixture": {"approval": "yes", "correction": ""},
         "validation_correction_fixture": {"approval": "yes", "correction": "yes"},
         "validation_identity_fixture": {"bank_status": "verified", "stage": "identity", "speech_event": "question"},
@@ -519,7 +528,7 @@ class ValidationTests(unittest.TestCase):
         report = validate(*arguments)
         self.assertTrue(report["ok"], report)
         code = arguments[0]["nodes"]["decision"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]["default"]
-        _run_check(code, {"vars": {"bank_status": "verified", "stage": "payment", "speech_event": "no"}, "expected": {"persuasion_attempts": 1, "route": "offer"}})
+        _run_check(code, {"vars": {"bank_status": "verified", "stage": "payment", "speech_event": "no"}, "expected": {"persuasion_attempts": 1, "route": "listen"}})
         for fault, reason in (
             ("vars['persuasion_attempts'] += 1", "missing speech consumed a persuasion attempt"),
             ("vars['route'] = 'offer'", "unsafe chain entered offer"),
@@ -549,11 +558,11 @@ class ValidationTests(unittest.TestCase):
                 self.assert_rejected(arguments, reason)
 
     def test_decision_controls_require_real_distinct_trusted_state(self):
-        for role in ("decision_event", "decision_date", "identity_answer", "speech_text", "persuasion_attempts", "party_confirmation"):
+        for role in ("decision_event", "decision_date", "decision_amount", "full_amount", "identity_answer", "speech_text", "persuasion_attempts", "party_confirmation"):
             with self.subTest(role=role):
                 arguments = candidate()
                 arguments[1]["security"]["validation_state"][role] = "unused_" + role
-                if role not in ("decision_event", "decision_date", "identity_answer", "speech_text"):
+                if role not in ("decision_event", "decision_date", "decision_amount", "identity_answer", "speech_text"):
                     arguments[1]["security"]["trusted_variables"].append("unused_" + role)
                 self.assert_rejected(arguments, "actual guard reads/writes")
         arguments = candidate()
@@ -568,6 +577,102 @@ class ValidationTests(unittest.TestCase):
         arguments = candidate()
         arguments[1]["security"]["party_confirmation_operand"] = ""
         self.assert_rejected(arguments, "party_confirmation_operand")
+
+    def test_current_full_amount_reference_records_the_bank_value(self):
+        arguments = candidate()
+        report = validate(*arguments)
+        self.assertTrue(report["ok"], report)
+        names = {check["name"] for check in report["checks"]}
+        self.assertIn("independent_current_full_amount_record", names)
+        self.assertIn("independent_full_amount_empty_event_blocks_offer", names)
+        self.assertIn("independent_full_amount_no_event_blocks_offer", names)
+        code = arguments[0]["nodes"]["decision"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]["default"]
+        state = dict(arguments[1]["security"]["validation_fixture"], speech_event="yes", speech_amount="full amount", speech_date="2026-10-14", amount="0")
+        _run_check(code, {"vars": state, "expected": {"amount": 50, "date": "2026-10-14", "route": "offer", "speech_event": "", "speech_amount": "", "speech_date": ""}})
+        arguments[1]["security"]["validation_fixture"]["bank_full_amount"] = 72.35
+        self.assertTrue(validate(*arguments)["ok"])
+
+    def test_full_amount_cannot_use_words_a_stale_offer_or_a_wrong_record_amount(self):
+        correct = "vars['amount'] = vars.get('bank_full_amount') if current_amount.strip().lower() == 'full amount' else current_amount"
+        for wrong in (
+            "vars['amount'] = current_amount if current_amount.strip().lower() == 'full amount' else vars.get('bank_full_amount')",
+            "vars['amount'] = vars.get('amount') if current_amount.strip().lower() == 'full amount' else vars.get('bank_full_amount')",
+            "vars['amount'] = vars.get('bank_full_amount') / 2 if current_amount.strip().lower() == 'full amount' else current_amount",
+        ):
+            with self.subTest(wrong=wrong):
+                arguments = candidate()
+                code = arguments[0]["nodes"]["decision"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]
+                code["default"] = code["default"].replace(correct, wrong)
+                report = validate(*arguments)
+                self.assertTrue(all(check["ok"] for check in report["checks"] if check["name"] != "independent_current_full_amount_record"), report)
+                self.assert_rejected(arguments, "independent_current_full_amount_record")
+        arguments = candidate()
+        code = arguments[0]["nodes"]["offer"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]
+        code["default"] = code["default"].replace("vars['validated_amount'] = amount", "vars['validated_amount'] = amount / 2")
+        self.assert_rejected(arguments, "amount promise did not bind the original numeric amount")
+
+    def test_full_amount_needs_a_current_acceptance_event(self):
+        for event, name in (("", "empty"), ("no", "no")):
+            with self.subTest(event=event):
+                arguments = candidate()
+                code = arguments[0]["nodes"]["decision"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]
+                code["default"] += f"if vars.get('stage') == 'payment' and event == {event!r} and current_amount:\n    vars['amount'] = vars.get('bank_full_amount')\n    vars['date'] = current_date\n    vars['route'] = 'offer'\n"
+                report = validate(*arguments)
+                self.assertTrue(next(check["ok"] for check in report["checks"] if check["name"] == "independent_current_full_amount_record"), report)
+                self.assert_rejected(arguments, f"independent_full_amount_{name}_event_blocks_offer")
+
+    def test_full_amount_metadata_must_be_trusted_numeric_and_read_only_to_speech(self):
+        for value in (None, "50", True, 0, -1, float("nan"), float("inf"), 10 ** 400):
+            with self.subTest(value=value):
+                arguments = candidate()
+                arguments[1]["security"]["validation_fixture"]["bank_full_amount"] = value
+                self.assert_rejected(arguments, "finite positive numeric full_amount")
+        arguments = candidate()
+        arguments[1]["security"]["trusted_variables"].remove("bank_full_amount")
+        self.assert_rejected(arguments, "control roles must be trusted")
+        arguments = candidate()
+        code = arguments[0]["nodes"]["decision"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]
+        code["default"] += "vars['bank_full_amount'] = current_amount\n"
+        self.assert_rejected(arguments, "decision may not overwrite the trusted bank full_amount")
+        arguments = candidate()
+        code = arguments[0]["nodes"]["decision"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]
+        code["default"] = code["default"].replace("vars['speech_amount'] = ''", "vars['speech_amount'] = current_amount")
+        self.assert_rejected(arguments, "consumed extraction speech_amount was not cleared")
+
+    def test_currency_amounts_reach_record_from_current_speech_and_shared_offer_guard(self):
+        arguments = candidate()
+        arguments[1]["security"]["validation_fixture"].update(bank_full_amount=72.35, amount="35.25")
+        report = validate(*arguments)
+        self.assertTrue(report["ok"], report)
+        for name in ("independent_current_currency_amount_record", "independent_shared_currency_amount_record"):
+            self.assertTrue(next(check["ok"] for check in report["checks"] if check["name"] == name), report)
+        code = arguments[0]["nodes"]["offer"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]["default"]
+        _run_check(code, {"vars": {"amount": "35.25 dollars", "date": "2026-10-14"}, "expected": {"amount": 35.25, "validated_amount": 35.25, "route": "confirmation"}})
+        offer = arguments[0]["nodes"]["offer"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]
+        offer["default"] = offer["default"].replace("        vars['amount'] = amount\n", "")
+        self.assertTrue(validate(*arguments)["ok"])
+
+    def test_currency_normalization_cannot_live_only_in_main_decision(self):
+        arguments = candidate()
+        decision = arguments[0]["nodes"]["decision"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]
+        decision["default"] = decision["default"].replace("current_amount = vars.get('speech_amount', '')", "current_amount = vars.get('speech_amount', '')\nif current_amount.endswith(' dollars'):\n    current_amount = current_amount[:-8]")
+        offer = arguments[0]["nodes"]["offer"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]
+        offer["default"] = offer["default"].replace("amount = float(currency.group(1) if currency else raw_amount)", "amount = float(raw_amount)")
+        report = validate(*arguments)
+        self.assertTrue(next(check["ok"] for check in report["checks"] if check["name"] == "independent_current_currency_amount_record"), report)
+        self.assert_rejected(arguments, "independent_shared_currency_amount_record")
+
+    def test_currency_amounts_reject_arbitrary_digits_and_non_finite_fallbacks(self):
+        arguments = candidate()
+        offer = arguments[0]["nodes"]["offer"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]
+        offer["default"] = offer["default"].replace("currency = re.fullmatch(", "currency = re.search(")
+        for label in ("trailing_prose", "date_digits"):
+            self.assert_rejected(arguments, "independent_invalid_currency_amount_" + label)
+        arguments = candidate()
+        offer = arguments[0]["nodes"]["offer"]["pre_actions"][0]["function"]["parameters"]["properties"]["code"]
+        offer["default"] = offer["default"].replace("raw_amount = str(vars.get('amount', 0)).strip()", "raw_amount = str(vars.get('amount', 0)).strip()\n    if raw_amount in ('NaN dollars', 'Infinity dollars'):\n        raw_amount = str(vars.get('bank_full_amount'))")
+        for label in ("nan", "infinity"):
+            self.assert_rejected(arguments, "independent_invalid_currency_amount_" + label)
 
     def test_spoken_identity_dates_reach_verify_with_the_original_iso_answer(self):
         arguments = candidate()

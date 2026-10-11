@@ -393,7 +393,7 @@ def _independent_checks(nodes, snippets, security, checks):
     third_party_fixture = security.get("validation_third_party_fixture", {})
     identity_answer_fixture = security.get("validation_identity_answer_fixture", {})
     identity_code_fixture = security.get("validation_identity_code_fixture", {})
-    required_roles = ("proposed_amount", "proposed_date", "approval_event", "correction", "decision_event", "decision_date", "identity_answer", "speech_text", "persuasion_attempts", "party_confirmation", "recorded", "offer_fingerprint", "readback_fingerprint", "exception", "route", "stage", "write_attempts", "write_result")
+    required_roles = ("proposed_amount", "proposed_date", "approval_event", "correction", "decision_event", "decision_date", "decision_amount", "full_amount", "identity_answer", "speech_text", "persuasion_attempts", "party_confirmation", "recorded", "offer_fingerprint", "readback_fingerprint", "exception", "route", "stage", "write_attempts", "write_result")
     for label, data, names in (("validation_state", roles, required_roles), ("validation_events", events, ("yes", "no", "question", "human", "plan", "hardship", "dispute", "third_party")), ("validation_routes", routes, ("account", "confirmation", "record", "offer", "transfer", "end"))):
         if not isinstance(data, dict) or any(not isinstance(data.get(name), str) or not data[name] for name in names):
             return [{"name": "independent_contract", "ok": False, "error": f"security.{label} needs every declared string role"}]
@@ -408,7 +408,7 @@ def _independent_checks(nodes, snippets, security, checks):
             contract_errors.append(f"{label} fixture must provide fresh speech inputs")
         elif set(data) & (trusted | {security.get("customer_id_variable")}):
             contract_errors.append(f"{label} fixture may provide fresh speech only")
-    if not {roles[name] for name in ("recorded", "offer_fingerprint", "readback_fingerprint", "exception", "route", "stage", "write_attempts", "write_result", "persuasion_attempts", "party_confirmation")} <= trusted:
+    if not {roles[name] for name in ("recorded", "offer_fingerprint", "readback_fingerprint", "exception", "route", "stage", "write_attempts", "write_result", "persuasion_attempts", "party_confirmation", "full_amount")} <= trusted:
         contract_errors.append("validation_state control roles must be trusted")
     authorization = security.get("record_authorization_variable", "record_authorization")
     authorized = security.get("record_authorization_operand", "authorized")
@@ -418,7 +418,7 @@ def _independent_checks(nodes, snippets, security, checks):
     if not isinstance(third_party_fixture, dict) or not third_party_fixture or not third_party_fixture.get(roles["stage"]):
         contract_errors.append("third-party fixture must provide current identity state and fresh speech inputs")
     reserved = {security.get("bank_verification_variable"), authorization, security.get("customer_id_variable")}
-    if {roles[name] for name in ("decision_event", "decision_date", "identity_answer", "speech_text", "persuasion_attempts", "party_confirmation")} & reserved:
+    if {roles[name] for name in ("decision_event", "decision_date", "decision_amount", "full_amount", "identity_answer", "speech_text", "persuasion_attempts", "party_confirmation")} & reserved:
         contract_errors.append("decision controls must be separate from bank, record and customer controls")
     decision = security.get("decision_node")
     decision_inputs = {field.get("name") for node in nodes.values() if any(item.get("target_node") == decision for item in node.get("transitions", [])) for field in node.get("extraction_schema", [])}
@@ -430,6 +430,14 @@ def _independent_checks(nodes, snippets, security, checks):
         contract_errors.append("decision_date must name fresh speech consumed by the decision node")
     if roles["speech_text"] not in decision_inputs or roles["speech_text"] in trusted:
         contract_errors.append("speech_text must name fresh speech consumed by the decision node")
+    if roles["decision_amount"] not in decision_inputs or roles["decision_amount"] in trusted:
+        contract_errors.append("decision_amount must name fresh speech consumed by the decision node")
+    full_amount = fixture.get(roles["full_amount"])
+    try:
+        if type(full_amount) not in (int, float) or not 0 < float(full_amount) < float("inf"):
+            raise ValueError("invalid bank amount")
+    except (TypeError, ValueError, OverflowError):
+        contract_errors.append("validation_fixture must provide a finite positive numeric full_amount")
     if isinstance(third_party_fixture, dict) and not any(third_party_fixture.get(name) for name in decision_inputs - {roles["decision_event"]}):
         contract_errors.append("third-party fixture needs a nonempty actual speech field besides decision_event")
     canonical_identity_answer = None
@@ -481,7 +489,7 @@ def _independent_checks(nodes, snippets, security, checks):
     for identifier, required_reads, required_writes in (
         (offer, ("proposed_amount", "proposed_date"), ("offer_fingerprint", "readback_fingerprint")),
         (approval, ("approval_event", "correction", "recorded", "offer_fingerprint", "readback_fingerprint", "write_attempts", "write_result"), ("route", "write_attempts")),
-        (decision, ("decision_event", "decision_date", "identity_answer", "speech_text", "persuasion_attempts", "party_confirmation"), ("decision_event", "decision_date", "identity_answer", "speech_text", "persuasion_attempts", "party_confirmation")),
+        (decision, ("decision_event", "decision_date", "decision_amount", "full_amount", "identity_answer", "speech_text", "persuasion_attempts", "party_confirmation"), ("decision_event", "decision_date", "decision_amount", "identity_answer", "speech_text", "persuasion_attempts", "party_confirmation")),
     ):
         if identifier not in snippets:
             contract_errors.append(f"missing guard snippet {identifier}")
@@ -490,6 +498,8 @@ def _independent_checks(nodes, snippets, security, checks):
             tree = _parse(snippets[identifier][0])
             if not {roles[name] for name in required_reads} <= _reads(tree) or not {roles[name] for name in required_writes} <= _writes(tree):
                 raise ValueError(f"{identifier}: validation roles must be the actual guard reads/writes")
+            if identifier == decision and roles["full_amount"] in _writes(tree):
+                raise ValueError("decision may not overwrite the trusted bank full_amount")
         except (ValueError, SyntaxError) as exc:
             contract_errors.append(str(exc))
     if contract_errors:
@@ -524,13 +534,13 @@ def _independent_checks(nodes, snippets, security, checks):
         if state.get(authorization) == authorized:
             raise ValueError("unsafe chain activated record authorization")
 
-    def valid_readback():
-        state = copy.deepcopy(fixture)
+    def valid_readback(input_state=None, start=offer):
+        state = copy.deepcopy(fixture if input_state is None else input_state)
         for field in (authorization, roles["recorded"], roles["offer_fingerprint"], roles["readback_fingerprint"]):
             state[field] = ""
         state[roles["write_attempts"]] = 0
         state[roles["write_result"]] = ""
-        state, target = advance(offer, state)
+        state, target = advance(start, state)
         if target not in readbacks or not state.get(roles["offer_fingerprint"]) or state.get(roles["readback_fingerprint"]) != state[roles["offer_fingerprint"]]:
             raise ValueError("valid offer did not reach a matching current readback")
         assert_denied(state)
@@ -584,6 +594,13 @@ def _independent_checks(nodes, snippets, security, checks):
 
     for value in ("-1", "0", "NaN", "Infinity"):
         run(f"independent_invalid_amount_{value}", lambda value=value: invalid_chain("proposed_amount", value))
+    for label, value in (
+        ("nan", "NaN dollars"), ("infinity", "Infinity dollars"),
+        ("negative", "-1 dollars"), ("zero", "0 dollars"),
+        ("trailing_prose", f"{full_amount} dollars on {fixture[roles['proposed_date']]}"),
+        ("date_digits", f"{fixture[roles['proposed_date']]} {full_amount} dollars"),
+    ):
+        run(f"independent_invalid_currency_amount_{label}", lambda value=value: invalid_chain("proposed_amount", value))
     run("independent_invalid_date", lambda: invalid_chain("proposed_date", "2026-02-30"))
     for check in checks:
         if isinstance(check, dict) and check.get("node_id") == offer and any(check.get("name", "").startswith(category) for category in ("invalid_amount", "invalid_date")):
@@ -609,6 +626,51 @@ def _independent_checks(nodes, snippets, security, checks):
         if target in record_nodes:
             raise ValueError("recorded product reached a second record action")
     run("independent_valid_record_and_duplicate", positive)
+
+    def full_amount_state(event, raw_amount="full amount"):
+        state = copy.deepcopy(fixture)
+        for name in decision_inputs:
+            state[name] = ""
+        state[roles["decision_event"]] = event
+        state[roles["decision_amount"]] = raw_amount
+        state[roles["decision_date"]] = fixture[roles["proposed_date"]]
+        state[roles["proposed_amount"]] = "0"
+        for name in (authorization, roles["recorded"], roles["offer_fingerprint"], roles["readback_fingerprint"]):
+            state[name] = ""
+        return state
+
+    def record_amount(state, expected_amount):
+        state, target = confirm(state)
+        if target not in record_nodes or state.get(authorization) != authorized:
+            raise ValueError("amount readback and current yes did not authorize a record action")
+        if not any(name == "create_promise" and _json_equal(body.get("amount"), expected_amount) for name, body in bound_request(target, state)):
+            raise ValueError("amount promise did not bind the original numeric amount")
+        state = step(f"{target}:create_promise:post", state, {"status": "success", "status_code": 200, "data": {"ok": True}})
+        if state.get(roles["recorded"]) != "recorded":
+            raise ValueError("successful amount result did not mark the product recorded")
+
+    def explicit_full_amount(raw_amount="full amount"):
+        state = valid_readback(full_amount_state(events["yes"], raw_amount), decision)
+        if not _json_equal(state.get(roles["full_amount"]), full_amount) or raw_amount == "full amount" and float(state.get(roles["proposed_amount"], 0)) != full_amount:
+            raise ValueError("current full amount reference did not resolve the trusted bank full_amount")
+        record_amount(state, full_amount)
+    run("independent_current_full_amount_record", explicit_full_amount)
+    run("independent_current_currency_amount_record", lambda: explicit_full_amount(f"{full_amount} dollars"))
+
+    def shared_currency_amount():
+        state = copy.deepcopy(fixture)
+        expected_amount = float(state[roles["proposed_amount"]])
+        state[roles["proposed_amount"]] = f"{state[roles['proposed_amount']]} dollars"
+        record_amount(valid_readback(state), expected_amount)
+    run("independent_shared_currency_amount_record", shared_currency_amount)
+
+    def inactive_full_amount(event):
+        state, target = advance(decision, full_amount_state(event), (offer, *readbacks, *record_nodes, *security.get("account_nodes", [])))
+        assert_denied(state)
+        if target not in security.get("close_nodes", []) and (nodes[target].get("node_type") != "conversation" or not nodes[target].get("extraction_schema")):
+            raise ValueError("inactive full amount event must return to a real listener or end safely")
+    for label, event in (("empty", ""), ("no", events["no"])):
+        run(f"independent_full_amount_{label}_event_blocks_offer", lambda event=event: inactive_full_amount(event))
 
     def changed_readback():
         state = valid_readback()

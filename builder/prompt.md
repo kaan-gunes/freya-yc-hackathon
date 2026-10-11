@@ -65,12 +65,13 @@ record_nodes: [nodes containing create_promise]
 record_authorization_variable: the guard-only string flag
 record_authorization_operand: "authorized"
 close_nodes: [terminal nodes; if explicit close action is used, that node too]
+  # Real workflow node IDs only, never lifecycle hook IDs such as workflow:close_call.
 decision_node: code node processing each ordinary caller reply
 validation_state: {proposed_amount, proposed_date, approval_event, correction,
                    recorded, offer_fingerprint, readback_fingerprint, exception,
                    route, stage, write_attempts, write_result, decision_event,
                    persuasion_attempts, party_confirmation, identity_answer,
-                   decision_date, speech_text}
+                   decision_date, speech_text, decision_amount, full_amount}
   # Values are actual vars keys, not example values.
 validation_events: {yes, no, question, human, plan, hardship, dispute, third_party}
   # Values are actual extraction enum operands.
@@ -171,6 +172,9 @@ The verify_identity post-hook must reset its status on EACH result, handle
 transport failure separately, inspect the current `result['data']` body, and set
 the trusted bank flag to "verified" only from successful complete bank verification.
 Strings "false" and "False" are false, never use their Python truthiness.
+Outside that post-hook, initialize or clear the bank flag only with a literal
+unverified/empty value. Do not reassign a copied flag that might be verified;
+leave an existing verified value unchanged rather than writing it again.
 Add a concise what_to_do_next to the result and remove header fields.
 Completing bank verification must also change stage to account-pending and clear
 the completed identity question. A successful tool result is not a new customer
@@ -201,12 +205,27 @@ first payment question. Proposal collection has NO create_promise tool. The mode
 can understand natural speech, but amount bounds, calendar bounds, adjustment,
 attempt limits, product order, and outcome selection use code. Numeric date
 interpretation and relative weekdays follow the supplied brief and `now`.
+For a current explicit acceptance or offer referring to the "full amount", resolve
+that phrase to the current product's trusted bank-derived full amount. Extraction
+may return the words rather than a number; they must not mask the bank amount or
+reach float() unchanged. Use the brief's meaning of full payment, not a remembered
+balance or earlier offer. If no exact payment date is agreed, ask for the date;
+do not ask again for a clearly accepted full amount or silently invent a date.
 Never turn a vague date into a silent concrete agreement. Counter updates must
 be per user decision, not per tool result or repeated node entry.
 
 Use an offer guard code node to select the product from bank state and validate
 the proposed amount and date. Reject non-finite/negative amounts, out-of-policy
 bounds, impossible dates, past dates and dates beyond the policy deadline.
+The shared amount parser accepts an exact numeric amount with a bounded monetary
+unit wrapper, such as "420 dollars". If the input defines a currency, accept only
+compatible units; never invent currency conversions. Remove only recognized
+wrappers and valid thousand
+grouping before numeric conversion. Require the whole remaining string to be a
+number; do not search arbitrary prose or dates for digits. Use this same parser
+for ordinary offers and confirmation corrections. Extraction may keep these raw
+wrappers instead of a plain numeric string. Unknown currency or unclear number
+words safely ask for an exact amount without charging a refusal/persuasion step.
 Weekend/holiday adjustment and too-late suggestions become new proposals for
 the customer to confirm. Fill a canonical offer fingerprint with product, amount,
 date. Clear ALL earlier confirmation and write result flags when an offer changes.
@@ -465,6 +484,19 @@ request context. Raw-text-only "0014." and "My last four digits are 0014." must
 send unchanged digits to that question, not a date. The digits are fixture data,
 not policy; use the input's real format. Blanking all current speech must never
 send a cached code. Add generated regressions for both raw-text-only paths.
+Map decision_amount to the actual distinct untrusted main amount input consumed
+and cleared by decision code, and full_amount to the trusted current bank-derived
+full amount read there. The valid offer fixture includes that numeric bank fact.
+Populate full_amount from bank product data in the account result hook; the
+speech decision reads it and must not overwrite it, even for initialization.
+An independent current yes with raw amount "full amount" and a valid fresh date
+must reach a real readback with the bank full amount, then require fresh approval
+before recording. Missing/unknown speech cannot reuse that phrase as a new offer.
+Independent currency-wrapper checks exercise both the current decision and the
+shared offer guard with a valid raw numeric amount plus " dollars"; each must
+reach a current matching readback. Prose containing digits and non-finite amounts
+with currency text must never authorize a write. Keep the parser source-currency
+aware; these check phrases describe the current observed unit-suffix boundary.
 Empty/rejected extraction is not a caller refusal or deliberate non-answer:
 repeat the current stage question without a new offer or persuasion use. Use a
 distinct event for a genuine non-answer where the brief calls for persuasion.
