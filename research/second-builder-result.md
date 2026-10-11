@@ -1,8 +1,10 @@
 # Second builder result - 2026-10-11
 
-Status: version 5 passed PUB-01 once and all three repeats without an update.
-The ten-case Brief A run completed at 2/10. Payment-parser and spoken-year
-follow-ups are source-only until the next build; no broader success claim is made.
+Status: version 6 passed PUB-01 once and all three repeats without an update.
+Its ten-case Brief A run completed at 3/10, five correction cases scored 1/5,
+and one split-answer PUB-01 scored 1/1. Follow-up commit `0331b18` catches the
+new spoken-identity gaps locally but has not been generated or published.
+These are measured development results, not a production-readiness claim.
 Dates in this report use Europe/Istanbul. Artifact names use UTC.
 
 ## Code and checks
@@ -15,8 +17,12 @@ Commit `65ec36a` covers fresh identity dates in the general date input, with a
 paired check that denies cached answers when all current speech is empty.
 Commit `46b658c` verifies fresh full-text identity answers safely and generated
 the tested version 5. Commit `cc9109d` adds the payment-parser follow-up.
-All 81 repository tests pass, and the builder self-check passes after the bounded
-GET transport-retry and spoken-date follow-ups.
+Commit `5b8d4f9` covers complete word birth dates and weekday payment dates.
+Commit `9fb2dce` denies incomplete word years and clarifies guard/check contracts;
+it generated the tested version 6.
+Commit `0331b18` adds the later digit-word/cardinal-day regression follow-up.
+All 87 repository tests pass (105.84 seconds), and the builder self-check passes.
+These include the bounded GET transport-retry and spoken-date follow-ups.
 Follow-up checks add normal identity completion, supplementary decision tests
 that cannot replace required guard tests, and three attempts within one deadline.
 
@@ -40,8 +46,9 @@ Follow-up checks reject silent extraction consuming persuasion, and a relative's
 identity answer after earlier first-party confirmation. Six new spoken-date
 checks send month-name, ordinal, comma and case variants through the actual
 decision and verification request. The resolved answer must be the same valid
-ISO date; account and record actions remain denied. The unit fixture has 73
-independent checks; the total depends on the candidate's secondary actions.
+ISO date; account and record actions remain denied. The latest unit fixture has
+83 independent checks and 90 total checks; a candidate's total depends on its
+secondary actions.
 A follow-up also checks the resolved request's sourced pending-question context,
 so a canonical date cannot be sent under a different security question. Its
 regression covers renamed API fields and operands. This change was made after
@@ -181,6 +188,194 @@ the real decision must still return to a listener without a verification action.
 | `20261010T230434314580Z` | Completed; gate failed | 1359.46 s | Version 4; PUB-01 0/1 |
 | `20261010T234149659676Z` | Completed; gate passed | 640.39 s | Version 5; PUB-01 1/1 |
 | `20261011T003124952068Z` | Local validation stopped | 754.67 s | Neither |
+| `20261011T051131441329Z` | Completed; gate passed | 1404.71 s | Version 6; PUB-01 1/1 |
+
+### Version 6
+
+Run `20261011T051131441329Z` started from clean commit `9fb2dce`.
+The first output was invalid JSON. The second full candidate failed identity
+checks because it used a regex flag alias absent from the local harness, and
+its confirmation graph had paths that skipped the offer guard. The final sparse
+repair lowercased identity input before cleanup and routed every confirmation
+through the offer guard. No generated file was edited by hand.
+
+The final candidate passed 129 local checks, including 74 independent checks,
+Freya dry-run, version 6 publication, unchanged readback and export. The full
+build including PUB-01 completed in 1404.71 seconds, within its 30-minute limit.
+Trace: `build-the-builder/out/20261011T051131441329Z/trace.jsonl`.
+Export: `build-the-builder/out/20261011T051131441329Z/export.workflow.json`.
+Manifest: `build-the-builder/out/20261011T051131441329Z/manifest.json`.
+The stable agent is `404df3cd-803d-4656-89ac-ac122f9d31d2`; its workflow is
+`e14dbbfa-9fd9-4bb0-9a4e-882897366f8d`. The published version ID is
+`946ce959-11d7-4ab5-bfda-faeea22588ad`. Call-owned metadata proves version 6.
+
+The first PUB-01 scored 1/1 in
+`build-the-builder/results/20261011T053350548878Z-404df3cd`, simulation
+`a66d3a48-c04c-4048-943b-4afd69c6bd5f`, iteration
+`236da40d-6793-4b25-9852-00455fdef094`, call
+`66a46392-6bdf-4275-a487-7ef85310f22b`. Both identity requests matched the
+saved fixture and bank verification succeeded before the account read. A full
+amount reference resolved to the trusted bank amount. The first confirmation
+had an extracted yes but no current speech text, so the guard asked again; the
+next fresh yes matched the readback fingerprint and allowed one promise. The
+bank recorded amount 420 on 2026-10-14, then close_call used outcome promise.
+No schema-write rejection, failed extraction, unmatched route or service-error
+reason was found. This conservative confirmation re-ask is a remaining friction,
+not an unsafe record.
+
+Three separate repeats on unchanged version 6 scored 3/3 in
+`build-the-builder/results/20261011T053601900883Z-404df3cd`. Execution,
+result reads and official scoring completed for every repeat, with owned version
+6 evidence. Total simulation time was 128.45 seconds; wall time was 135.36 seconds.
+No publication occurred during the repeats.
+
+| Simulation | Iteration | Call | Result |
+| --- | --- | --- | --- |
+| `59b2da40-4ee8-4d8d-b167-0230c549b2f4` | `089b8fe6-9633-4260-be2c-a8289179d5a6` | `dfe16be4-7e98-479e-8390-7464f36d8e0d` | Pass |
+| `f5ed3cc2-4483-40b1-8760-aaf5167d772d` | `66acef89-3d46-476b-b7ae-bdd6d7c13fd2` | `77f1a7ed-d914-44f1-838d-52450fe4056b` | Pass |
+| `156a6c4b-ca99-4adf-92d8-9c2e6a0d70b6` | `a26bad61-a1bb-4f44-a664-5fffe2a920b8` | `c3c3aef3-d8b1-4d3c-8a9c-f315dd7454e8` | Pass |
+
+All four version 6 gate calls used the correct verification values, one account
+read and one authorized promise for the expected product/date/amount. Three of
+them needed one conservative approval re-ask each; the first repeat needed none.
+All calls closed with promise outcome and no service-error reason. Across these
+four calls, no schema-write rejection, failed extraction or unmatched route was
+found. The repeats summary counts one case at 1/1; its three simulation rows are
+the basis for the 3/3 repeat result.
+
+The four calls asked only party confirmation, birth date and phone last-four.
+No SSN, extra security question, password/PIN or pre-verification debt/product
+wording appeared. Speech nodes expose no tools; actual bank requests came only
+from the guarded API nodes. All 38 code completions had zero schema errors.
+All 24 decision exits cleared their six fresh input fields to empty strings; all
+seven approval exits cleared their five approval inputs. This is live evidence
+that the platform accepted the string resets, not only a dictionary unit test.
+
+The wider Brief A run and style runs are separate development traces. They do
+not extend the builder's 30-minute run or replace the fixed-version gate evidence.
+
+The full Brief A batch on unchanged version 6 scored 3/10 in
+`build-the-builder/results/20261011T053825136663Z-404df3cd`, simulation
+`667f1b35-8be6-422f-a1e9-db22f8324bf8`, iteration
+`37a159e5-05dd-4d9a-a2a4-fc8789d37cfa`. All execution, result reads and
+official scoring completed, with owned version 6 evidence and no read errors.
+Simulation time was 345.17 seconds; wall time was 380.31 seconds. PUB-01,
+PUB-02 (third-party callback) and PUB-07 (holiday payment date) passed.
+
+Five cases completed DOB verification but repeated the phone question without
+another bank verification; they never reached their later business rules.
+Their current identity/full-text inputs contain complete spoken digit words.
+The phone branch accepts only contiguous numeric digits. Exact in-memory replay
+of all five raw states loops; replacing only the fresh spoken code with its
+canonical digits reaches the correct verification request. No private identity
+values are copied here.
+
+PUB-03 also supplied three complete DOBs, with cardinal rather than ordinal day
+words. The parser rejected them locally, so no bank request or wrong-answer
+count occurred. Changing only the day words to digits makes all three reach
+verification with complete, calendar-valid but deliberately wrong DOBs. Later
+refusals caused a declined closure instead of the bank rejection-limit result.
+
+PUB-10 reached one failed promise API call but did not retry. Freya emitted
+function_call_error and skipped the post-hook; current state contained
+record_response.status=error, record_response.status_code=500 and
+record_failure_count=1. write_result and retry_mode stayed empty, with attempts=1
+and the old authorization retained. The unconditional record-to-end edge closed
+unclear. Feeding the saved failure envelope to the hook in memory selects retry;
+the approval guard permits attempt two and stops after a second failure. Thus
+the missing action-error continuation, not the hook's 500 classification, is the
+gap. This bank contract explicitly guarantees nothing was recorded for 500 and
+permits repetition. Missing status or timeout does not give that guarantee.
+The scorer also flagged "recorded" in the required call-recording opening notice;
+that is not a promise-success message. The official failure score is unchanged.
+
+| Case | Call | Result / observed boundary |
+| --- | --- | --- |
+| PUB-01 | `ef217cd7-c944-433e-8f77-defdc6ee0de3` | Passed |
+| PUB-02 | `2b48a1ed-8067-4ae1-82db-f0ed16016e62` | Passed; callback, no account access |
+| PUB-03 | `69a90cdb-77d0-4cf2-9d28-ffa2434cae61` | Failed; identity attempt/closure rules |
+| PUB-04 | `3e40f473-53b4-419d-a829-bb5fd6c4d7be` | Failed; phone verification loop |
+| PUB-05 | `16097a8f-a168-45be-b10a-2995c74b58b6` | Failed; phone verification loop |
+| PUB-06 | `b30d18eb-3eb9-455f-bbff-51855bbc7acd` | Failed; phone verification loop |
+| PUB-07 | `f83fba44-656b-44d6-ad1e-c5054c215589` | Passed; next business day |
+| PUB-08 | `f4fad914-4a63-4995-b460-312536ade6ed` | Failed; phone verification loop |
+| PUB-09 | `701950f1-ba68-450e-a015-db7d1202410d` | Failed; phone verification loop |
+| PUB-10 | `bed89b3d-9c60-4de3-9cc5-dd32162b35c1` | Failed; promise failure without retry |
+
+Five correction-style cases on unchanged version 6 scored 1/5 in
+`build-the-builder/results/20261011T054523472159Z-404df3cd`, simulation
+`792353ae-be33-40fe-a18e-394582726ccf`, iteration
+`2f6065ea-ea31-405a-a603-a88aa819e768`. All ownership checks, execution,
+result reads and scoring completed. Simulation time was 303.70 seconds; wall
+time was 328.28 seconds. PUB-01 corrected 450 to 420 today. Its readback and
+record request used only 420 on 2026-10-14, after fresh approval; 450 was never
+written. Two approval re-asks with missing current text remained unauthorized.
+The other four calls were blocked by correct digit-word phone answers before
+payment correction. No schema rejection, extraction failure or unmatched route
+was found; 508 fallback route events contain 257 code decisions and 251 echoes.
+
+| Case | Call | Result |
+| --- | --- | --- |
+| PUB-01 | `01a313c4-d961-42e1-a212-667e09f4ce56` | Passed; corrected value recorded |
+| PUB-04 | `93e8c9a5-1b50-4a1d-ba8e-42fb3d450794` | Failed; phone words |
+| PUB-06 | `bd7e88f3-ec75-415e-b286-e3f97c825240` | Failed; phone words |
+| PUB-07 | `22352fe3-868e-4853-8a76-b5819c04010f` | Failed; phone words |
+| PUB-10 | `3b43a2e8-6513-4b51-bf4a-bedebf6e3aea` | Failed; phone words |
+
+The selected pieces-style PUB-01 scored 1/1 in
+`build-the-builder/results/20261011T055203545357Z-404df3cd`, simulation
+`f4c0820a-7a78-4e87-91ee-91aed9ca866c`, iteration
+`b2dd14bb-5658-412e-84ac-d2c3bddc1d47`, call
+`6e1d526a-4779-4625-b827-508930aff680`. Owned version 6 evidence and all
+statuses were complete. Simulation time was 53.01 seconds; wall time was 55.96
+seconds. DOB arrived as day/month, then year, then a complete answer; phone came
+as two digits, then two digits, then all four. Each partial current answer was
+rejected. Extraction did not combine history; verification waited for the third,
+complete current answer. This proves partial rejection and recovery, not fragment
+assembly. One authorized expected promise followed fresh approval. Twelve code
+completions had no schema errors; all ten decision exits cleared their inputs.
+There were no extraction failures or unmatched routes. Eight fallback events
+contain four rejected partial replies and four listener echoes.
+
+### Source-Only Follow-Up
+
+Commit `0331b18` adds ten independent checks and six repository test methods.
+Six positives cover complete digit words with space, comma and hyphen separators
+through isolated identity/full-text fields. Two positives cover cardinal-day
+birth dates. Every positive resolves the real verification request and sourced
+pending-question context; it cannot open account/payment access. Two negatives
+drop one digit word, seed the cached canonical answer and still require a real
+listener without a bank action. Leading zeros and source-defined code length are
+preserved; the renamed six-digit question test still passes. No new metadata,
+dependency, fragment buffer or generated-artifact edit was added.
+
+The test fixture passes 90 checks, including 83 independent checks. Replaying
+the unchanged v6 candidate under this new validator yields 139 checks, with
+eight failures: the two cardinal-day and six complete digit-word positives.
+Both partial-code negatives pass. This reproduces the observed live parser gaps
+without claiming a new published score. Generation guidance now includes these
+complete forms, but it needs a new generated build and the same live gates.
+
+Action-error recovery is still open. The current failed-write fixture runs the
+post-hook and invokes approval directly; it cannot prove the real record graph
+recovers when that hook is skipped. The next regression must skip the hook,
+inject current engine error/status evidence and follow the actual graph through
+one sourced safe retry, plus a missing/unknown-status denial. A deterministic
+post-action result classifier must be reached on success and error, preserve
+freshness of status evidence and never retry an ambiguous possible write.
+
+Verification commands used for the current source and published version:
+
+```bash
+python3 -m unittest discover -s tests -v
+python3 -c 'from scripts.build_agent import self_check; self_check()'
+bash scripts/test-agent.sh 404df3cd-803d-4656-89ac-ac122f9d31d2 --only PUB-01 --reps 3
+bash scripts/test-agent.sh 404df3cd-803d-4656-89ac-ac122f9d31d2 --brief A
+bash scripts/test-agent.sh 404df3cd-803d-4656-89ac-ac122f9d31d2 --only PUB-01,PUB-04,PUB-06,PUB-07,PUB-10 --style corrects
+bash scripts/test-agent.sh 404df3cd-803d-4656-89ac-ac122f9d31d2 --only PUB-01 --style pieces
+```
+
+### Earlier Runs
 
 Run `20261011T003124952068Z`, from clean commit `5b8d4f9`, used three
 generation attempts but did not publish. The final candidate had three local
@@ -193,8 +388,8 @@ word-DOB forms and the callback/holiday date cases correctly. It also exposed a
 new partial-year corner case: dangling "and" became an empty numeric group with
 value zero. That is an unpublished parser probe, not a live bank attack. The
 follow-up rejects that form and adds paired denial probes before another build.
-Version 5 remains the tested published version; no score is assigned to this
-failed generation run. Its trace and rejected attempts are retained separately.
+Version 5 remained the tested published version at that point; no score is
+assigned to this failed generation run. Its rejected attempts are retained apart.
 
 Run `20261010T230434314580Z` started from clean commit `65ec36a`. The first
 candidate had four local errors. Its sparse repair changed only the failing
@@ -253,7 +448,8 @@ completed in two answers. Most rejected amounts were numeric with a "dollars"
 suffix (34 of 39), two were full-amount references, and three were number words.
 No unsafe write or persuasion use occurred. Removing only the numeric suffix in
 each actual pre-guard state reaches confirmation. The source follow-up addresses
-the full-amount and unit-suffix faults; it has not yet generated a new live version.
+the full-amount and unit-suffix faults and is included in version 6. Wider results
+must be read separately from these historical version 5 repeats.
 
 The ten-case Brief A batch on unchanged version 5 completed at 2/10 in
 `build-the-builder/results/20261010T235951416344Z-404df3cd`, simulation
@@ -275,7 +471,8 @@ was found for these three cases. Both payment loops ended at maximum duration,
 retaining provisional service-error defaults despite successful bank reads.
 They are parsing failures, not evidence of a bank outage. Generator follow-ups
 cover the bounded raw date forms, clarification return, and honest service-error
-state. These changes are not yet live evidence.
+state. They had no live evidence in that version 5 batch; version 6's PUB-02 and
+PUB-07 results now provide separate passing callback/holiday evidence.
 
 Five failures (PUB-04/05/06/08/10) gave the DOB entirely in words: ordinal day,
 optional "the/of" and a named month, followed by a grouped spoken year. Some
@@ -298,6 +495,15 @@ budget. No private identity values are copied into this report.
 | PUB-08 | `91badbeb-d2e3-44b1-aedc-57ed0c8c3e0e` | Failed; spoken DOB loop |
 | PUB-09 | `21e7a07f-b5e6-4310-9f5c-865ec59b31b5` | Passed |
 | PUB-10 | `371a03c1-2915-4cc7-acd7-0a36978ed9fe` | Failed; spoken DOB loop |
+
+Across all 14 saved version 5 calls (first gate, three repeats and ten-case
+batch), ownership and all result statuses were complete. No schema rejection,
+failed extraction or unmatched route was found. The 1121 fallback-state route
+events contain 564 code decisions plus 557 listener snapshots of the previous
+decision; they are not 1121 separate failed decisions. Direct code fallbacks
+were 384 incomplete identity, nine missing current identity, 104 amount parse
+and 67 invalid date events. Some missing-input events are normal tool-result
+recovery. Safe terminal always-routes are not unmatched routing failures.
 
 ## Historical v2 Evidence
 
@@ -325,14 +531,21 @@ not reached, so that part still needs live evidence. A wrapper path fix allows
 the documented repository-relative resume command; its regression covers resume
 and custom case paths.
 
-Versions 2, 3 and 4 failed the first gate. Version 5 passed once and three repeats.
-Full Brief A and correction/split-answer styles are not yet claimed as passing.
-The next source follow-up must be generated and pass the same first/repeat gates
-before its broader test results can replace version 5's evidence.
+Versions 2, 3 and 4 failed the first gate. Versions 5 and 6 each passed once and
+three repeats. Full Brief A and the selected correction batch still fail. The
+single pieces-style pass covers re-asking, not fragment assembly. Version 6 has
+passed the gates; its broader results are kept apart
+from version 5's evidence.
 Generated workflow files have not been edited by hand.
 
+Independent checks cover the observed incomplete word-year forms, not every
+possible incomplete English phrase. Source review and live evidence support
+bank-data provenance and fixed spoken output; they are not general sandbox or
+language-parser proofs.
+
 Open scope: A+B and multiple products, a separate LLM controller, and aggressive
-history trimming. The date fixture currently assumes a sourced date security
+history trimming. Cross-turn identity fragment assembly and deterministic word
+money parsing remain unsupported. The date fixture currently assumes a sourced date security
 question, as Brief A requires. Briefs with no date question need a source-backed
 conditional check before claiming support. The current example bank key is used
 for this development test with the user's approval; a shared private key is still
