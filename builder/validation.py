@@ -1480,6 +1480,9 @@ def _independent_checks(nodes, snippets, security, checks, policy=None, openapi=
         for label, event in (("question", events["question"]), ("empty", ""), ("wrong", events["yes"])):
             run("independent_support_decline_" + label, lambda event=event: support_decline(event))
         run("independent_support_decline_polite_question", lambda: support_decline(events["question"], "No, thanks. Is there a discount?"))
+        # Real PUB-05 passive wording; the event label must not shadow it.
+        for label, event in (("question", events["question"]), ("empty", ""), ("wrong", events["yes"])):
+            run("independent_support_decline_passive_" + label, lambda event=event: support_decline(event, "No, I do not want to be transferred. Can you just give me a discount?"))
 
         def plan(event, text, wanted, pre_identity=False):
             base = third_party_fixture if pre_identity else fixture
@@ -1501,6 +1504,9 @@ def _independent_checks(nodes, snippets, security, checks, policy=None, openapi=
         for label, text in (("negated", "I do not want a new payment plan."),
                             ("contraction", "I don't want a plan."), ("paying", "I plan to pay on Friday.")):
             run("independent_plan_" + label, lambda text=text: plan(events["plan"], text, False))
+        # A declined instalment object is not a restructuring request under any label.
+        for label, event in (("plan", events["plan"]), ("question", events["question"]), ("empty", ""), ("no", events["no"])):
+            run("independent_plan_lower_instalments_declined_" + label, lambda event=event: plan(event, "I do not want lower instalments.", False))
 
         def mixed_ai(event):
             raw = f"the {payment_ordinal_day} of {payment_month}"

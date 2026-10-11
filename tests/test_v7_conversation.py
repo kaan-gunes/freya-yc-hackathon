@@ -25,7 +25,7 @@ if vars.get('recorded') == 'recorded' and event == 'no':
     vars['route'] = 'end'
 plan_requested = bool(re.search(r'\b(need|want|request) (?:lower instalments|a new payment plan)\b', text)) and not re.search(r'\b(do not|don.t) want\b', text)
 if vars.get('bank_status') == 'verified' and vars.get('stage') in ('payment', 'support'):
-    if vars.get('stage') == 'support' and ('do not want a transfer' in text or text.startswith('no, thanks')):
+    if vars.get('stage') == 'support' and (re.search(r'\b(do not|don.t) want (a transfer|to be transferred)\b', text) or re.match(r'no\b', text)):
         vars['persuasion_attempts'] = prior_attempts
         vars['question_text'] = 'I cannot offer a discount.'
         vars['outcome'] = 'no_promise'
@@ -76,6 +76,9 @@ class V7ConversationChecks(unittest.TestCase):
             ("\nif event != 'plan' and plan_requested:\n    vars['route'] = 'listen'\n", "independent_mixed_plan"),
             ("\nif event == 'plan' and vars.get('bank_status') == 'verified':\n    vars['exception'] = 'plan'\n    vars['route'] = 'transfer'\n", "independent_plan_negated"),
             ("\nif 'robot' in text:\n    vars['answer_text'] = 'Here is your payment.'\n", "independent_ai_with_current_offer"),
+            # The two old real-candidate faults: passive decline shadowed, declined instalments transferred.
+            ("\nif 'transferred' in text:\n    vars['route'] = 'listen'\n", "independent_support_decline_passive"),
+            ("\nif 'lower instalments' in text and vars.get('bank_status') == 'verified':\n    vars['exception'] = 'plan'\n    vars['route'] = 'transfer'\n", "independent_plan_lower_instalments_declined"),
         ):
             with self.subTest(check=check):
                 args = conversation_candidate()

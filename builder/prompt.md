@@ -168,6 +168,7 @@ it must not reject a clear positive sentence solely because it is longer.
 Separate party confirmation from bank identity. A third party cannot answer the
 security questions. Answer allowed caller questions before any repeat question.
 Do not infer name confirmation from an ambiguous greeting. Use the brief's limit.
+A greeting ending in "?" is not an information question and gets no answer.
 At every pre-verification stage, a current third-party admission overrides any
 older party confirmation. Clear that confirmation, do not process the relative's
 security answers, and follow the source's third-party/callback path.
@@ -391,25 +392,57 @@ Use source priority for hardship vs persuasion/plan request; voluntary offers
 remain possible where allowed. Counter thresholds and API enums are from inputs.
 Use stage-specific extraction descriptions for payment, support and confirmation,
 even if listeners share fields. Always extract the latest full speech verbatim.
-The single event enum is a hint, not a lossless summary of mixed intents. In code,
-before a generic question/offer/persuasion branch, inspect ONLY the copied current
-full speech for explicit support decline and explicit new-plan/lower-instalment
-requests. During pending support, "I do not want a transfer; can you reduce the
-amount?" declines support and answers the question before the sourced hardship
-close; never offer support again. A new-plan request plus amount refusal reaches
-the sourced restructuring action only in permitted verified stages. Negation
-("I do not want a new plan") and planning to pay ("I plan to pay on Friday") are
-not requests for restructuring, even if the event incorrectly says plan. Before
-identity, the same text stays within the source privacy/stage rules. Hardship plus
-a voluntary offer still has the source's priority over restructuring/persuasion.
-Question answering is separate from offering: never append the previous minimum
-or support offer automatically to an answer. If the latest question asks the
-minimum, answer from the bank-derived current floor without a new offer. If the
-full speech is absent, ask what the question is; do not guess minimum/AI/scam
-content from stale text and do not advance counters. Empty/mislabelled events with
-current explicit questions still answer safely. Offer the floor once, preserving
-only the brief's explicit second-persuasion exception; a question cannot spend or
-reset that exception. A support decline must remain declined on later questions.
+The single event enum is a hint, not a lossless summary of mixed intents.
+Current intent: right after copying and clearing inputs, derive separate facts
+from ONLY the copied current full speech (lowercased, apostrophes normalized);
+never from earlier speech, residual fields or approvals. No fact may overwrite
+another, and do not rewrite the event so a later branch loses a fact. Keep:
+- greeting_only: only greeting/filler words and punctuation ("Hello?", "Hi
+  there.", "Good morning?"). It is never a question; "?" alone never makes one.
+  At the first-party stage it is the source's unclear name reply: no answer
+  prefix, the source's ask budget, then the exact name question again.
+- asked: a non-greeting question clause ("?" or a leading question word or
+  auxiliary), with sub-facts AI, scam, minimum/floor and other. Its answer
+  prefix comes from these facts under EVERY event label (question, wrong yes/no,
+  empty): the sourced AI/scam answer; the minimum from the current bank-derived
+  floor when verified and loaded; otherwise the sourced no-information answer.
+  An answer is not an offer, refusal, approval or counter step. A question with
+  a wrong no/yes/empty event answers without spending persuasion, offering the
+  floor or support again, or replaying an older question.
+- support_declined_now, only while the sourced support offer is pending: a
+  leading refusal ("No", "No, thanks", "No thank you"; not "No problem") or a
+  negated transfer/connection/support phrase in active or passive form ("I do
+  not want a transfer", "I do not want to be transferred", "don't connect me",
+  "no support"). It wins over a following question and over yes/question/empty
+  events: answer the question in the close speech, then take the sourced
+  hardship close, never offering support again; it stays declined later. A clear
+  acceptance without such a decline still reaches the sourced support transfer.
+  A current explicit voluntary offer keeps the source's hardship priority.
+- plan_declined: negation scoped to the plan/instalment object ("I do not want
+  lower instalments", "I don't need a new plan", "no payment plan"). Under every
+  label, including a wrong plan event, it is not restructuring; it is not an
+  amount refusal either and spends no persuasion. "I plan to pay on Friday" is
+  a payment statement, not a plan request.
+- plan_requested: a positive request for a new plan or lower/reduced
+  instalments that is not plan_declined. An amount refusal does not negate it:
+  "I cannot pay that amount. I would like lower instalments instead." requests a
+  plan. Only verified permitted stages reach the sourced restructuring action;
+  before identity, the same text stays within the source privacy/stage rules.
+- offered_now: bounded explicit offer wording ("I can pay", "I will pay", "I'll
+  pay", "I plan to pay") plus fresh amount/date fields from this reply. Bare
+  residual fields or an event label alone are not an offer.
+Branch on these facts in source priority before generic event branches. Hardship
+plus a voluntary offer keeps the source's priority over restructuring/persuasion.
+Attach the answer prefix by the final route (listening, readback or close TTS),
+not by the normalized event: an AI or scam question with offered_now reaches the
+offer guard and readback under yes, offer, question and empty events, and that
+readback TTS keeps the sourced answer. The answer never authorizes a record; a
+changed amount/date still clears prior approval and needs a new readback and a
+clear yes. Never append the previous minimum or support offer automatically to
+an answer. If the full speech is absent, ask what the question is; do not guess
+minimum/AI/scam content from stale text and do not advance counters. Offer the
+floor once, preserving only the brief's explicit second-persuasion exception; a
+question cannot spend or reset that exception.
 Required sympathy must be spoken on the actual listening/readback path, including
 a voluntary offer that goes straight through silent code to confirmation TTS.
 Keep hardship context until that negotiation is resolved. A voluntary offer does
