@@ -1545,7 +1545,15 @@ def _independent_checks(nodes, snippets, security, checks, policy=None, openapi=
         def normal_close():
             state, target = confirm(valid_readback())
             state, target = complete_record(target, state, {"status": "success", "status_code": 200, "data": {"ok": True}})
-            spoken(target, state)
+            text = spoken(target, state)
+            if nodes[target].get("node_type") == "conversation":
+                state, target = advance(decision, current(state, events["no"], "No, thank you. Goodbye."), (*record_nodes,))
+                text += " " + spoken(target, state)
+            if nodes[target].get("node_type") != "end_call":
+                raise ValueError("normal post-record refusal did not reach a resolved farewell")
+            sms = "You will receive a text message confirming this promise."
+            if any(sms in line for line in source_texts) and sms not in text:
+                raise ValueError("successful bank record lost the source-required SMS sentence")
         run("independent_success_close_resolves", normal_close)
     return reports
 

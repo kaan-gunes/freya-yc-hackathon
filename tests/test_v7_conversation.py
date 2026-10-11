@@ -21,6 +21,8 @@ def conversation_candidate():
 vars['question_text'] = 'Please repeat your question.'
 vars['answer_text'] = 'Here is your payment.'
 text = speech_text.lower()
+if vars.get('recorded') == 'recorded' and event == 'no':
+    vars['route'] = 'end'
 plan_requested = bool(re.search(r'\b(need|want|request) (?:lower instalments|a new payment plan)\b', text)) and not re.search(r'\b(do not|don.t) want\b', text)
 if vars.get('bank_status') == 'verified' and vars.get('stage') in ('payment', 'support'):
     if vars.get('stage') == 'support' and ('do not want a transfer' in text or text.startswith('no, thanks')):
@@ -91,6 +93,17 @@ class V7ConversationChecks(unittest.TestCase):
                 args[0]["nodes"]["safe_retry"]["on_enter"]["text"] = "{{question_text}}"
             report = validate(*args)
             self.assertTrue(any(row["name"] == check and not row["ok"] for row in report["checks"]), report)
+
+    def test_delayed_normal_close_is_checked_after_the_success_listener(self):
+        args = conversation_candidate()
+        node = args[0]["nodes"]["record_result"]
+        node["pre_actions"][0]["function"]["parameters"]["properties"]["code"]["default"] += "\nif vars.get('recorded') == 'recorded':\n    vars['question_text'] = 'Your promise is recorded. Can I help further?'\n    vars['route'] = 'listen'\n"
+        node["transitions"].insert(0, route("payment_listen", guard("route", "listen")))
+        report = validate(*args)
+        self.assertTrue(report["ok"], report["errors"])
+        args[0]["nodes"]["end"]["terminal"]["function"]["parameters"]["properties"]["spoken_message"]["default"] = "{{terminal_text}} Thank you. Goodbye."
+        report = validate(*args)
+        self.assertTrue(any(row["name"] == "independent_success_close_resolves" and not row["ok"] for row in report["checks"]), report)
 
     def test_word_payment_parser_real_raw_paths_and_negative_forms(self):
         args = candidate()
