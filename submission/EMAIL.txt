@@ -1,0 +1,24 @@
+To: yavuz@freyavoice.ai
+Subject: Core — Build the Builder Final Submission
+
+Hi Yavuz,
+
+Please find Core's final submission attached.
+
+Team members:
+Hamit Tuğrul Arslan — hamitarsln09@gmail.com
+Kaan Güneş — kaangunes2009@gmail.com
+
+Repository: https://github.com/kaan-gunes/freya-yc-hackathon
+Delivery reference: core-final-20261011, the immutable Git tag for the delivery commit.
+Mock URL: https://core-freya-final.hamitarsln09.workers.dev
+
+The manifest records the compiler code SHA. The trace contains the native coding agent's full session log for the builder run. No final live simulations were run.
+
+Attachments, also stored at the delivery reference:
+1. submission/selected/submission.json
+2. submission/selected/export.workflow.json
+3. submission/selected/trace.jsonl
+
+Thank you,
+Core

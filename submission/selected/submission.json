@@ -1,0 +1,20 @@
+{
+  "team": "Core",
+  "members": [
+    {
+      "name": "Hamit Tuğrul Arslan",
+      "email": "hamitarsln09@gmail.com"
+    },
+    {
+      "name": "Kaan Güneş",
+      "email": "kaangunes2009@gmail.com"
+    }
+  ],
+  "repo": "https://github.com/kaan-gunes/freya-yc-hackathon",
+  "commit": "core-final-20261011",
+  "builder_run_commit": "a8e8e06c44b5c0e3b5f287564142b01e8466d140",
+  "run_command": "bash scripts/build-agent.sh \"{case_folder}\" --mock-url https://core-freya-final.hamitarsln09.workers.dev --slot core-final --budget-seconds 1800",
+  "workflow": "submission/selected/export.workflow.json",
+  "trace": "submission/selected/trace.jsonl",
+  "mock_url": "https://core-freya-final.hamitarsln09.workers.dev"
+}

@@ -1,0 +1,231 @@
+{
+  "started_at": "2026-10-11T19:54:03.753968+00:00",
+  "status": "completed",
+  "budget_seconds": 300,
+  "slot": "core-final",
+  "offline": false,
+  "case_folder": true,
+  "mock_url": "https://core-freya-final.hamitarsln09.workers.dev",
+  "live_test": {
+    "status": "not_run",
+    "reason": "final_case"
+  },
+  "generation_attempts": [],
+  "artifacts": "/Users/hamitarslan/Desktop/Projects/freya-yc-hackathon/build-the-builder/out/20261011T195403752897Z",
+  "code_commit": "a8e8e06c44b5c0e3b5f287564142b01e8466d140",
+  "code_dirty": false,
+  "code_changes": [],
+  "sources": [
+    {
+      "path": "build-the-builder/out/final-case/recheck-2100/20261011-210013/original/BRIEF.md",
+      "sha256": "b81506df0cb43ab5ce023b3e3880d6f477021da81bc4ed3c8b5d0aab61e42da9",
+      "lines": 59
+    },
+    {
+      "path": "build-the-builder/out/final-case/recheck-2100/20261011-210013/original/cloudflare-mock/example/example-response.json",
+      "sha256": "0deeee4de065d3fdbd78818ba270547c5d9601ab8398b1e4d5596603196401a9",
+      "lines": 6
+    },
+    {
+      "path": "build-the-builder/out/final-case/recheck-2100/20261011-210013/original/cloudflare-mock/example/worker.js",
+      "sha256": "0fb2a47300c8e131a47e6e265ff33350733e0bdb19c17097aab4168dc6901d24",
+      "lines": 47
+    },
+    {
+      "path": "build-the-builder/out/final-case/recheck-2100/20261011-210013/original/cloudflare-mock/example/wrangler.toml",
+      "sha256": "a7a80f867f971916c521ef2133d405ce8698423b4db19f93f734f03f987ea60b",
+      "lines": 3
+    },
+    {
+      "path": "build-the-builder/out/final-case/recheck-2100/20261011-210013/original/cloudflare-mock/README.md",
+      "sha256": "6e50898b1bcc91ca76646b557786d722888bb8ae96aa719f20b659daa23abd6a",
+      "lines": 58
+    },
+    {
+      "path": "build-the-builder/out/final-case/recheck-2100/20261011-210013/original/example-scenarios.md",
+      "sha256": "c7534cb5d591d6399a72c3c717f35d75c81ff2d07c1587ba5ab90245d283d989",
+      "lines": 109
+    },
+    {
+      "path": "build-the-builder/out/final-case/recheck-2100/20261011-210013/original/README.md",
+      "sha256": "476f99af2e66739de8ed4a192b04c003cc6ab5d31a9bce6825af4d9608852cc6",
+      "lines": 26
+    },
+    {
+      "path": "build-the-builder/out/final-case/recheck-2100/20261011-210013/original/sources/documents/2025-08-14-cards-faq.md",
+      "sha256": "bb26e035f72da6d5add21d62271dc798106c1a859deb00fa9a9878dc8f6d8f26",
+      "lines": 82
+    },
+    {
+      "path": "build-the-builder/out/final-case/recheck-2100/20261011-210013/original/sources/documents/2026-09-10-ivr-prompt-sheet.md",
+      "sha256": "dfb0d352d57dc22466c0b11ee557b4af1ba0f266be48b455aabae140a64dd463",
+      "lines": 56
+    },
+    {
+      "path": "build-the-builder/out/final-case/recheck-2100/20261011-210013/original/sources/documents/2026-10-01-service-contract.md",
+      "sha256": "692414a06036911509072d602b6c85bf38cbf2c791d26488d53d28be1cf35470",
+      "lines": 532
+    },
+    {
+      "path": "build-the-builder/out/final-case/recheck-2100/20261011-210013/original/sources/emails/2026-09-24-kickoff-questions.txt",
+      "sha256": "d19e44e8098850f378fd6816892f7b9196ec6f469ccd6dc8dea76566b850be74",
+      "lines": 125
+    },
+    {
+      "path": "build-the-builder/out/final-case/recheck-2100/20261011-210013/original/sources/emails/2026-10-09-decisions-recap.txt",
+      "sha256": "709f18f3d73c4e9398a3ed9dc7249a54b7ca48dcdde8ce7aa7ebbbcdef1b0732",
+      "lines": 85
+    },
+    {
+      "path": "build-the-builder/out/final-case/recheck-2100/20261011-210013/original/sources/emails/attachments/2026-09-02-statement-debt-analysis.md",
+      "sha256": "16915b44652e16afeea64d5f3ecf6d09b9bcce54d7d39b132ff8237369c507a2",
+      "lines": 244
+    },
+    {
+      "path": "build-the-builder/out/final-case/recheck-2100/20261011-210013/original/sources/emails/attachments/2026-10-08-statement-debt-analysis.md",
+      "sha256": "c33b5640a06f6be6e6d3cc7f86189ab75bf4ffb4e935874b3ee3b48b03ff1094",
+      "lines": 348
+    },
+    {
+      "path": "build-the-builder/out/final-case/recheck-2100/20261011-210013/original/sources/meetings/2026-10-07-analysis-session-transcript.txt",
+      "sha256": "6e75d0013cf6c653f4a25a6ce0c2f6e0a96b4472474e530d6ab4bebf8b21b20d",
+      "lines": 323
+    },
+    {
+      "path": "build-the-builder/out/final-case/recheck-2100/20261011-210013/original/sources/meetings/2026-10-10-follow-up-session-transcript.txt",
+      "sha256": "860e3a0249492482535af48c2103430e7de4abc351efe53e6d872b4db837137b",
+      "lines": 132
+    },
+    {
+      "path": "build-the-builder/out/final-case/recheck-2100/20261011-210013/original/statement-debt-call-flow.pdf",
+      "sha256": "1092fe84329911c89477e794ed874f8216aeb31cc4c825931c4e017374eb69ca",
+      "lines": 220,
+      "extracted_sha256": "576a9fc87f4ff8e614203fcd95fd70b3ac0d081758b5fa00e48788092a65fc65"
+    },
+    {
+      "path": "build-the-builder/out/final-case/recheck-2100/20261011-210013/original/test-environment/test-customers.json",
+      "sha256": "d6ce155638f61ab17910d53ea993a2b0d68cf4e10d6b9db2fb8e4a7add0ef44d",
+      "lines": 20371
+    },
+    {
+      "path": "build-the-builder/out/final-case/recheck-2100/20261011-210013/original/test-environment/test-customers.md",
+      "sha256": "f0c6607e8ad2c874608dc39d8ab13fbb11f5f1f2975c08fe871a378c32815375",
+      "lines": 77
+    },
+    {
+      "path": "builder/prompt.md",
+      "sha256": "914c4aafb9a1fb4d925b8df7aa3ef57e7d1f421f3bd0be3695147af33ba62b6a",
+      "lines": 968
+    },
+    {
+      "path": "build-the-builder/docs/workflow-format.md",
+      "sha256": "4ff70b5a37b647122e6a6f3ca1a523b207dbcdf6afb32058de8451a8c7d1dcfc",
+      "lines": 859
+    },
+    {
+      "path": "build-the-builder/docs/tools-and-code.md",
+      "sha256": "56be9c87fbfddf5855c25fe83d4633bafd885d7cba5677133c15d211eb21b711",
+      "lines": 587
+    },
+    {
+      "path": "build-the-builder/docs/api.md",
+      "sha256": "6003c0ba733f33b5981822d3418c20e042d29107fbb1045213b35dad6bf95157",
+      "lines": 349
+    }
+  ],
+  "inferred_schema_sha256": "817869c356a16c261b72390183e885dc3feb25878854dcdbc487ab2ca7289017",
+  "contract_source": {
+    "path": "builder/contracts.py",
+    "sha256": "a5e085e29ecaf730a3b1be4e2512029a0bc8443a370b0e6e4cc092d2b0672f43",
+    "lines": 105
+  },
+  "compiler_source": {
+    "path": "builder/compiler.py",
+    "sha256": "89489a3cda00c30ecaf926ea02e05c090d51e4c732ecc3ac4eac41fb30472dc6",
+    "lines": 602
+  },
+  "input_reader_source": {
+    "path": "builder/inputs.py",
+    "sha256": "38286f6d688ab07dafdd49b500858bd365b358739857a9b885386bf8d3b8a7da",
+    "lines": 200
+  },
+  "language_source": {
+    "path": "builder/language.py",
+    "sha256": "7d20fe01b4c8e96701bed3f7227aee4bd76c20bc3d44f77b59e8099f44794a45",
+    "lines": 101
+  },
+  "resume_build": {
+    "run_directory": "/Users/hamitarslan/Desktop/Projects/freya-yc-hackathon/build-the-builder/out/20261011T195348150836Z",
+    "code_commit": "a8e8e06c44b5c0e3b5f287564142b01e8466d140",
+    "candidate_path": "/Users/hamitarslan/Desktop/Projects/freya-yc-hackathon/build-the-builder/out/20261011T195348150836Z/candidate-attempt-1.json",
+    "candidate_sha256": "27dd9db77d4cd4ae433c6b91ea0ba4052bb0767962caf8dad69d608f207a9b28",
+    "generation_hash_verified": true,
+    "generation_started_at": "2026-10-11T19:53:48.152818+00:00",
+    "generation_elapsed_seconds": 7.29,
+    "reused_at": "2026-10-11T19:54:04.311550+00:00"
+  },
+  "draft_candidate_sha256": "27dd9db77d4cd4ae433c6b91ea0ba4052bb0767962caf8dad69d608f207a9b28",
+  "mock_bindings": [
+    {
+      "tool": "cards.list",
+      "url": "https://core-freya-final.hamitarsln09.workers.dev/voice/v1/cards.list"
+    },
+    {
+      "tool": "cards.balance",
+      "url": "https://core-freya-final.hamitarsln09.workers.dev/voice/v1/cards.balance"
+    },
+    {
+      "tool": "contact.email.get",
+      "url": "https://core-freya-final.hamitarsln09.workers.dev/voice/v1/contact.email.get"
+    },
+    {
+      "tool": "statement.pdf.send",
+      "url": "https://core-freya-final.hamitarsln09.workers.dev/voice/v1/statement.pdf.send"
+    },
+    {
+      "tool": "statement.week.get",
+      "url": "https://core-freya-final.hamitarsln09.workers.dev/voice/v1/statement.week.get"
+    },
+    {
+      "tool": "statement.week.decide",
+      "url": "https://core-freya-final.hamitarsln09.workers.dev/voice/v1/statement.week.decide"
+    },
+    {
+      "tool": "statement.week.change",
+      "url": "https://core-freya-final.hamitarsln09.workers.dev/voice/v1/statement.week.change"
+    }
+  ],
+  "candidate_sha256": "27dd9db77d4cd4ae433c6b91ea0ba4052bb0767962caf8dad69d608f207a9b28",
+  "uncertainties": [
+    "No tools, local files, live validation or simulations were used. The checks are runnable inputs and expected outputs, not claimed passes.",
+    "The annual-right interpretation distinguishes proactive offers from an explicit request. Unknown rights are not offered as available. An explicit request proceeds to a preview and fresh confirmation, and the backend accepts or rejects the change. Known-used rights and same-call successful changes are blocked. This interpretation uses the service contract line330 together with the meeting's known-used restriction and the analysis's open proactive detection issue: sources/documents/2026-10-01-service-contract.md:330; sources/meetings/2026-10-07-analysis-session-transcript.txt:210-228; sources/emails/attachments/2026-10-08-statement-debt-analysis.md:245,263,340.",
+    "Physical routing remains external. Terminal function names identify the intended IVR destination; the supplied end_call handler ends the assistant segment. No transfer endpoint, queue or IVR flag schema is invented. Sources: sources/documents/2026-10-01-service-contract.md:7; sources/emails/attachments/2026-10-08-statement-debt-analysis.md:336; build-the-builder/docs/workflow-format.md:613-653.",
+    "Masked duplicate cards can lack the last-six and full-number facts needed for a unique match. The runtime asks the agreed question, then uses a bounded selection fallback without guessing hidden digits. Sources: sources/emails/attachments/2026-10-08-statement-debt-analysis.md:63-75; sources/emails/2026-10-09-decisions-recap.txt:32-37,67-71.",
+    "The source does not provide a client timeout number or silence duration. API timeoutMs remains omitted. All API default paths enter their current-result classifier, which treats a missing response as the sourced technical failure. No write is automatically retried. Sources: sources/documents/2026-10-01-service-contract.md:132,527; build-the-builder/docs/tools-and-code.md:347-365.",
+    "Voice delivery of real no-input events is not defined in the supplied platform material. Empty extraction is not itself treated as silence. Sources: sources/emails/attachments/2026-10-08-statement-debt-analysis.md:277; build-the-builder/docs/workflow-format.md:115.",
+    "Production token credentials are not supplied. The bound test services ignore tokens. The production refresh requirement is retained as an external integration issue, without inventing credentials. Sources: sources/documents/2026-10-01-service-contract.md:25-54,123.",
+    "No business rule selects currencyType for an unspecified email request. The runtime asks for the currency and preserves the mandatory request field. Sources: sources/documents/2026-10-01-service-contract.md:475-488.",
+    "Future-period foreign-currency totals in the no-statement-debt branch remain open. The current TL-only sentence and its main-menu exit are retained. Sources: sources/emails/attachments/2026-10-08-statement-debt-analysis.md:164-168,342; sources/meetings/2026-10-10-follow-up-session-transcript.txt:58-59.",
+    "The foreign-transfer announcement is a factual generated sentence naming only currencies whose returned transferAmount is positive. Exact approved wording remains open; no conversion rate or computed transferred amount is announced. Sources: sources/emails/attachments/2026-10-08-statement-debt-analysis.md:126,343.",
+    "The analysis excludes isMainCard false, while the contract returns such cards and the shared-statement discussion permits an owned linked card. The candidate retains the explicit supplementary-selection restriction, with finite retries, rather than treating isMainCard false as confirmed own-card eligibility. Sources: sources/documents/2026-10-01-service-contract.md:201; sources/emails/attachments/2026-10-08-statement-debt-analysis.md:77,251-255.",
+    "A future statementDate is preserved but described as dated statement information, never as a statement already cut. It cannot be used as an issued PDF date before the call date. The sources do not define a complete before-statement-date reading branch. Sources: sources/documents/2026-10-01-service-contract.md:267; sources/emails/attachments/2026-10-08-statement-debt-analysis.md:185,190.",
+    "Successful email and week actions retain a listener after the sourced completion announcement so a current resend, undo or effective-date question is reachable. Physical IVR handoff timing is outside the supplied contract. A fourth email is blocked, and every resend requires a new address readback and fresh consent. Sources: sources/emails/attachments/2026-10-08-statement-debt-analysis.md:233,238,257,262.",
+    "Recording and log masking, written confirmation of mandatory IVR notices, rate limits and success measures remain open. Sources: sources/emails/attachments/2026-10-08-statement-debt-analysis.md:344-346; sources/documents/2026-10-01-service-contract.md:530.",
+    "The supplied runtime host's deployment, exact fixture responses and response delays were not tested in this turn. Sources: BRIEF.md:19; sources/documents/2026-10-01-service-contract.md:521-523."
+  ],
+  "summary": "Repaired the executable draft with bounded conversation branches, safe card labels, fresh confirmation and resend paths, explicit week requests, current-response failure handling, raw-speech bindings and decimal-preserving speech. External facts remain isolated in documented runtime fallbacks.",
+  "node_count": 43,
+  "tool_count": 25,
+  "api_tool_count": 7,
+  "resume_validation": {
+    "valid": true,
+    "errors": []
+  },
+  "agent_id": "551a00e0-3772-475c-9034-8dbd0436ac32",
+  "workflow_id": "a6757fcc-f678-444c-b1f0-0c4279c0eb95",
+  "published_version": 1,
+  "published_version_id": "be75653b-1fe3-475e-80dd-346672c57bf0",
+  "ended_at": "2026-10-11T19:54:12.773167+00:00",
+  "elapsed_seconds": 9.02,
+  "submission_directory": "/Users/hamitarslan/Desktop/Projects/freya-yc-hackathon/submission/selected"
+}
