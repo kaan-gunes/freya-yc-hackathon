@@ -1,5 +1,7 @@
 # Freya YC Hackathon
 
+[14 Ekim: final teslimi ve karşılaştırmalı inceleme](research/hackathon-postmortem-20261014.md) — sıfır/invalid belirsizliği, gerçek teslim kanıtı ve final workflow'unda yeniden üretilen iki kusur.
+
 Freya “Build the Builder” hackathonu için ortak çalışma klasörü. Starter kit v3, araştırma notları, test araçları ve [ilk builder](builder/README.md) bulunur.
 
 **Amaç:** Banka talimatlarını ve araç API dosyasını okuyup, Freya üzerinde kurallara uygun bir telefon agentı oluşturan builder geliştirmek.
